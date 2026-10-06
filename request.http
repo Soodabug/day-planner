@@ -1,32 +1,29 @@
-### Create
-POST http://localhost:3000/tasks
+### Sign up
+POST http://localhost:3000/auth/signup
 Content-Type: application/json
 
-{
-  "title": "Test task",
-  "date": "2026-10-06"
-}
+{ "email": "soode@example.com", "password": "password123" }
 
-### List
-GET http://localhost:3000/tasks
+> {% client.global.set("token", response.body.token); %}
 
-### Mark as done (paste the id from Create)
-PUT http://localhost:3000/tasks/684e9088-aa72-4458-bbd9-e21989031be6
-
-### Delete (same id)
-DELETE http://localhost:3000/tasks/684e9088-aa72-4458-bbd9-e21989031be6
-
-### List again
-GET http://localhost:3000/tasks
-
-### Bad date → should be 400 VALIDATION_FAILED
-POST http://localhost:3000/tasks
+### Log in
+POST http://localhost:3000/auth/login
 Content-Type: application/json
 
-{ "title": "x", "date": "hello" }
+{ "email": "soode@example.com", "password": "password123" }
 
-### Bad id → should be 400 VALIDATION_FAILED
-PUT http://localhost:3000/tasks/abc
+> {% client.global.set("token", response.body.token); %}
 
-### Valid uuid that doesn't exist → should be 404 NOT_FOUND
-PUT http://localhost:3000/tasks/00000000-0000-4000-8000-000000000000
+### Create a task
+POST http://localhost:3000/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "title": "My first private task", "date": "2026-10-07" }
+
+### List my tasks
+GET http://localhost:3000/tasks
+Authorization: Bearer {{token}}
+
+### Without token → should be 401
+GET http://localhost:3000/tasks
