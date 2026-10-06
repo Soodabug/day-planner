@@ -1,0 +1,32 @@
+### Create
+POST http://localhost:3000/tasks
+Content-Type: application/json
+
+{
+  "title": "Test task",
+  "date": "2026-10-06"
+}
+
+### List
+GET http://localhost:3000/tasks
+
+### Mark as done (paste the id from Create)
+PUT http://localhost:3000/tasks/684e9088-aa72-4458-bbd9-e21989031be6
+
+### Delete (same id)
+DELETE http://localhost:3000/tasks/684e9088-aa72-4458-bbd9-e21989031be6
+
+### List again
+GET http://localhost:3000/tasks
+
+### Bad date → should be 400 VALIDATION_FAILED
+POST http://localhost:3000/tasks
+Content-Type: application/json
+
+{ "title": "x", "date": "hello" }
+
+### Bad id → should be 400 VALIDATION_FAILED
+PUT http://localhost:3000/tasks/abc
+
+### Valid uuid that doesn't exist → should be 404 NOT_FOUND
+PUT http://localhost:3000/tasks/00000000-0000-4000-8000-000000000000
