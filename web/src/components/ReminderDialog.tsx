@@ -106,7 +106,7 @@ export function ReminderDialog({
                     {problem && <ErrorAlert>{problem}</ErrorAlert>}
 
                     <p className="text-xs text-quiet">
-                        Reminders show up while Day Planner is open in a browser tab.
+                        Tasks with a time also notify you at that time. Notifications show up while Day Planner is open in a browser tab.
                     </p>
                 </div>
             )}

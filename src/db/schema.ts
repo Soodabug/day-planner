@@ -14,5 +14,7 @@ export const tasks = pgTable('tasks', {
         .references(() => users.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     date: date('date').notNull(),
+    // Optional time of day as HH:MM (24h). null = no specific time.
+    time: text('time'),
     done: boolean('done').notNull().default(false),
 });

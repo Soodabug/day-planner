@@ -34,3 +34,25 @@ export function greeting() {
     if (hour < 18) return 'Good afternoon.';
     return 'Good evening.';
 }
+
+// Current local time as HH:MM (24h), comparable with task times as plain strings.
+export function currentTime() {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
+// "14:30" -> "2:30 PM" (or "14:30", depending on the user's locale).
+export function formatTime(value: string) {
+    const [hours, minutes] = value.split(':').map(Number);
+    const date = new Date();
+    date.setHours(hours, minutes, 0, 0);
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+// Earliest first. On the same day, tasks with a time come before tasks without one.
+export function byDateAndTime(
+    a: { date: string; time: string | null },
+    b: { date: string; time: string | null },
+) {
+    return a.date.localeCompare(b.date) || (a.time ?? '99:99').localeCompare(b.time ?? '99:99');
+}

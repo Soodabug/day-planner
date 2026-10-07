@@ -7,7 +7,9 @@ export function loadLocalTasks(): Task[] {
     try {
         const raw = localStorage.getItem(LOCAL_TASKS_KEY);
         const parsed: unknown = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? (parsed as Task[]) : [];
+        if (!Array.isArray(parsed)) return [];
+        // Tasks saved before times existed have no time field.
+        return (parsed as Task[]).map((task) => ({ ...task, time: task.time ?? null }));
     } catch {
         return [];
     }
@@ -21,8 +23,8 @@ export function saveLocalTasks(tasks: Task[]) {
     }
 }
 
-export function createLocalTask(title: string, date: string): Task {
-    return { id: crypto.randomUUID(), title, date, done: false };
+export function createLocalTask(title: string, date: string, time: string | null): Task {
+    return { id: crypto.randomUUID(), title, date, time, done: false };
 }
 
 // After sign in: copy the guest tasks into the account, one by one.
@@ -32,7 +34,7 @@ export async function moveLocalTasksToAccount() {
     let remaining = loadLocalTasks();
 
     for (const task of [...remaining]) {
-        const created = await api.createTask(task.title, task.date);
+        const created = await api.createTask(task.title, task.date, task.time);
         if (task.done) {
             await api.markDone(created.id);
         }
