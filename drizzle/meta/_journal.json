@@ -29,6 +29,13 @@
       "when": 1791371910603,
       "tag": "0003_handy_hardball",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791372166686,
+      "tag": "0004_closed_queen_noir",
+      "breakpoints": true
     }
   ]
 }

@@ -74,7 +74,7 @@ app.post('/auth/signup', async (c) => {
         .values({ email, passwordHash })
         .returning({ id: usersTable.id, email: usersTable.email });
 
-    const token = await createToken(user.id);
+    const token = await createToken(user.id, 0);
     return c.json({ token, user }, 201);
 });
 
@@ -95,7 +95,7 @@ app.post('/auth/login', async (c) => {
         throw new AppError('INVALID_CREDENTIALS');
     }
 
-    const token = await createToken(user.id);
+    const token = await createToken(user.id, user.tokenVersion);
     return c.json({ token, user: { id: user.id, email: user.email } });
 });
 
@@ -185,12 +185,23 @@ app.post('/auth/reset-password', async (c) => {
         throw new AppError('RESET_LINK_INVALID');
     }
 
+    // Raising token_version logs the account out on every device:
+    // all login tokens issued before now stop working.
     const passwordHash = await hashPassword(password);
-    const [user] = await db
+    const [updated] = await db
         .update(usersTable)
-        .set({ passwordHash })
+        .set({ passwordHash, tokenVersion: sql`${usersTable.tokenVersion} + 1` })
         .where(eq(usersTable.id, reset.userId))
-        .returning({ id: usersTable.id, email: usersTable.email });
+        .returning({
+            id: usersTable.id,
+            email: usersTable.email,
+            tokenVersion: usersTable.tokenVersion,
+        });
+    const user = { id: updated.id, email: updated.email };
+
+    // Logged-out devices must not keep receiving this account's reminders.
+    // Reminders are turned on again per device after logging in.
+    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, reset.userId));
 
     // Any other reset links of this account stop working too.
     await db
@@ -198,7 +209,7 @@ app.post('/auth/reset-password', async (c) => {
         .set({ usedAt: new Date() })
         .where(and(eq(passwordResets.userId, reset.userId), isNull(passwordResets.usedAt)));
 
-    const loginToken = await createToken(user.id);
+    const loginToken = await createToken(user.id, updated.tokenVersion);
     return c.json({ token: loginToken, user });
 });
 
