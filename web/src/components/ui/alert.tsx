@@ -8,7 +8,7 @@ export function ErrorAlert({ className, children, ...props }: ComponentProps<'di
         <div
             role="alert"
             className={cn(
-                'flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive',
+                'flex items-start gap-2 rounded-md border-2 border-alarm bg-alarm-soft px-3 py-2.5 text-sm font-medium text-alarm',
                 className,
             )}
             {...props}

@@ -6,10 +6,9 @@ export function Input({ className, type, ...props }: ComponentProps<'input'>) {
         <input
             type={type}
             className={cn(
-                'flex h-10 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-base outline-none transition-colors sm:text-sm',
-                'placeholder:text-muted-foreground',
-                'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                'aria-invalid:border-destructive aria-invalid:ring-destructive/20',
+                'flex h-11 w-full min-w-0 rounded-md border-2 border-ink bg-paper px-3 text-base text-ink',
+                'placeholder:text-quiet',
+                'aria-invalid:border-alarm',
                 'disabled:cursor-not-allowed disabled:opacity-50',
                 className,
             )}
