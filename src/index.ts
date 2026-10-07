@@ -1,8 +1,9 @@
 import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { db } from './db/client.js';
 import {
+    passwordResets,
     pushSubscriptions,
     reminderSettings,
     tasks as tasksTable,
@@ -11,6 +12,8 @@ import {
 import {
     authSchema,
     createTaskSchema,
+    forgotPasswordSchema,
+    resetPasswordSchema,
     pushSubscriptionSchema,
     pushUnsubscribeSchema,
     reminderSchema,
@@ -20,7 +23,8 @@ import {
 import { AppError, errors } from './errors.js';
 import { checkPassword, createToken, hashPassword, requireUser, type AuthEnv } from './auth.js';
 import { cors } from 'hono/cors';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { sendEmail } from './email.js';
 import { localDateAndTime, sendDueReminders, sendToUser, vapidPublicKey } from './push.js';
 
 const app = new Hono<AuthEnv>();
@@ -93,6 +97,109 @@ app.post('/auth/login', async (c) => {
 
     const token = await createToken(user.id);
     return c.json({ token, user: { id: user.id, email: user.email } });
+});
+
+// ---------- password reset ----------
+
+const RESET_LINK_MINUTES = 60;
+const RESET_REQUEST_GAP_SECONDS = 60;
+
+function hashResetToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+}
+
+// Step 1: the user asks for a reset link.
+// The answer is the same whether the account exists or not,
+// so this cannot be used to find out who has an account.
+app.post('/auth/forgot-password', async (c) => {
+    const parsed = forgotPasswordSchema.safeParse(await readJson(c));
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+    const { email } = parsed.data;
+    const answer = { message: 'If an account exists for this email, a reset link has been sent' };
+
+    const [user] = await db
+        .select()
+        .from(usersTable)
+        .where(eq(sql`lower(${usersTable.email})`, email));
+    if (!user) {
+        return c.json(answer);
+    }
+
+    // At most one email per minute per account.
+    const recently = new Date(Date.now() - RESET_REQUEST_GAP_SECONDS * 1000);
+    const [recent] = await db
+        .select({ id: passwordResets.id })
+        .from(passwordResets)
+        .where(and(eq(passwordResets.userId, user.id), gt(passwordResets.createdAt, recently)));
+    if (recent) {
+        return c.json(answer);
+    }
+
+    const token = randomBytes(32).toString('base64url');
+    await db.insert(passwordResets).values({
+        userId: user.id,
+        tokenHash: hashResetToken(token),
+        expiresAt: new Date(Date.now() + RESET_LINK_MINUTES * 60 * 1000),
+    });
+
+    const link = `${process.env.WEB_ORIGIN}/?reset=${token}`;
+    await sendEmail({
+        to: user.email,
+        subject: 'Reset your Day Planner password',
+        text:
+            `Someone asked to reset the password for your Day Planner account.\n\n` +
+            `Choose a new password here (the link works for ${RESET_LINK_MINUTES} minutes):\n${link}\n\n` +
+            `If this was not you, ignore this email. Your password stays the same.`,
+        html:
+            `<p>Someone asked to reset the password for your Day Planner account.</p>` +
+            `<p><a href="${link}">Choose a new password</a> (the link works for ${RESET_LINK_MINUTES} minutes).</p>` +
+            `<p>If this was not you, ignore this email. Your password stays the same.</p>`,
+    });
+
+    return c.json(answer);
+});
+
+// Step 2: the user opens the link and chooses a new password. Logs them in.
+app.post('/auth/reset-password', async (c) => {
+    const parsed = resetPasswordSchema.safeParse(await readJson(c));
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+    const { token, password } = parsed.data;
+
+    // Claim the link in one step, so it cannot be used twice.
+    const [reset] = await db
+        .update(passwordResets)
+        .set({ usedAt: new Date() })
+        .where(
+            and(
+                eq(passwordResets.tokenHash, hashResetToken(token)),
+                isNull(passwordResets.usedAt),
+                gt(passwordResets.expiresAt, new Date()),
+            ),
+        )
+        .returning();
+    if (!reset) {
+        throw new AppError('RESET_LINK_INVALID');
+    }
+
+    const passwordHash = await hashPassword(password);
+    const [user] = await db
+        .update(usersTable)
+        .set({ passwordHash })
+        .where(eq(usersTable.id, reset.userId))
+        .returning({ id: usersTable.id, email: usersTable.email });
+
+    // Any other reset links of this account stop working too.
+    await db
+        .update(passwordResets)
+        .set({ usedAt: new Date() })
+        .where(and(eq(passwordResets.userId, reset.userId), isNull(passwordResets.usedAt)));
+
+    const loginToken = await createToken(user.id);
+    return c.json({ token: loginToken, user });
 });
 
 // ---------- tasks (all need a token) ----------

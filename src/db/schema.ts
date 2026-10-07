@@ -17,6 +17,19 @@ export const tasks = pgTable('tasks', {
     done: boolean('done').notNull().default(false),
 });
 
+// A "forgot password" request. Only a hash of the emailed token is stored,
+// so someone who can read the database still cannot reset a password.
+export const passwordResets = pgTable('password_resets', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+        .notNull()
+        .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // One row per browser/device that agreed to receive push notifications.
 export const pushSubscriptions = pgTable('push_subscriptions', {
     id: uuid('id').primaryKey().defaultRandom(),

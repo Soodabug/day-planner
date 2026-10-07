@@ -3,6 +3,7 @@ export const errors = {
     UNAUTHORIZED: { status: 401, message: 'You need to log in' },
     INVALID_CREDENTIALS: { status: 401, message: 'Wrong email or password' },
     NOT_FOUND: { status: 404, message: 'Not found' },
+    RESET_LINK_INVALID: { status: 400, message: 'This reset link is invalid or has expired' },
     EMAIL_TAKEN: { status: 409, message: 'This email is already registered' },
     INTERNAL: { status: 500, message: 'Something went wrong' },
 } as const;

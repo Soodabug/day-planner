@@ -12,19 +12,51 @@ type Props = {
     onLoggedIn: () => void;
 };
 
+type Mode = 'login' | 'signup' | 'forgot';
+
+const TITLES: Record<Mode, string> = {
+    login: 'Log in',
+    signup: 'Create an account',
+    forgot: 'Reset your password',
+};
+
 export function AuthDialog({ open, onClose, onLoggedIn }: Props) {
-    const [mode, setMode] = useState<'login' | 'signup'>('login');
+    const [mode, setMode] = useState<Mode>('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
     const [loading, setLoading] = useState(false);
+
+    function showError(err: unknown) {
+        if (err instanceof ApiError && err.code === 'VALIDATION_FAILED') {
+            setError(
+                mode === 'forgot'
+                    ? 'Enter a valid email address.'
+                    : 'Enter a valid email and a password with at least 8 characters.',
+            );
+        } else if (err instanceof ApiError) {
+            setError(err.message);
+        } else {
+            setError('Could not reach the server.');
+        }
+    }
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setError('');
+        setNotice('');
         setLoading(true);
 
         try {
+            if (mode === 'forgot') {
+                await api.forgotPassword(email);
+                setNotice(
+                    'If an account exists for this email, a reset link is on its way. It works for 1 hour. Check your spam folder too.',
+                );
+                return;
+            }
+
             const result =
                 mode === 'login'
                     ? await api.login(email, password)
@@ -41,31 +73,30 @@ export function AuthDialog({ open, onClose, onLoggedIn }: Props) {
             setPassword('');
             onLoggedIn();
         } catch (err) {
-            if (err instanceof ApiError && err.code === 'VALIDATION_FAILED') {
-                setError('Enter a valid email and a password with at least 8 characters.');
-            } else if (err instanceof ApiError) {
-                setError(err.message);
-            } else {
-                setError('Could not reach the server.');
-            }
+            showError(err);
         } finally {
             setLoading(false);
         }
     }
 
-    function switchMode() {
-        setMode(mode === 'login' ? 'signup' : 'login');
+    function switchMode(next: Mode) {
+        setMode(next);
         setError('');
+        setNotice('');
     }
 
-    const isLogin = mode === 'login';
+    const submitLabel = { login: 'Log in', signup: 'Sign up', forgot: 'Send reset link' }[mode];
 
     return (
         <Dialog
             open={open}
             onClose={onClose}
-            title={isLogin ? 'Log in' : 'Create an account'}
-            description="Keep your plan on every device. Tasks you already wrote here come with you."
+            title={TITLES[mode]}
+            description={
+                mode === 'forgot'
+                    ? 'Enter the email of your account and we send you a link to choose a new password.'
+                    : 'Keep your plan on every device. Tasks you already wrote here come with you.'
+            }
         >
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
@@ -84,39 +115,62 @@ export function AuthDialog({ open, onClose, onLoggedIn }: Props) {
                     />
                 </div>
 
-                <div className="flex flex-col gap-1.5">
-                    <label htmlFor="password" className="text-sm font-semibold">
-                        Password
-                    </label>
-                    <Input
-                        id="password"
-                        type="password"
-                        autoComplete={isLogin ? 'current-password' : 'new-password'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        minLength={8}
-                        aria-invalid={error ? true : undefined}
-                        aria-describedby={isLogin ? undefined : 'password-hint'}
-                        required
-                    />
-                    {!isLogin && (
-                        <p id="password-hint" className="text-xs text-quiet">
-                            At least 8 characters.
-                        </p>
-                    )}
-                </div>
+                {mode !== 'forgot' && (
+                    <div className="flex flex-col gap-1.5">
+                        <div className="flex items-baseline justify-between">
+                            <label htmlFor="password" className="text-sm font-semibold">
+                                Password
+                            </label>
+                            {mode === 'login' && (
+                                <Button
+                                    variant="link"
+                                    className="text-xs font-medium"
+                                    onClick={() => switchMode('forgot')}
+                                >
+                                    Forgot password?
+                                </Button>
+                            )}
+                        </div>
+                        <Input
+                            id="password"
+                            type="password"
+                            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            minLength={8}
+                            aria-invalid={error ? true : undefined}
+                            aria-describedby={mode === 'signup' ? 'password-hint' : undefined}
+                            required
+                        />
+                        {mode === 'signup' && (
+                            <p id="password-hint" className="text-xs text-quiet">
+                                At least 8 characters.
+                            </p>
+                        )}
+                    </div>
+                )}
 
                 {error && <ErrorAlert>{error}</ErrorAlert>}
+                {notice && (
+                    <p role="status" className="rounded-md border-2 border-ink bg-haze px-3 py-2.5 text-sm font-medium">
+                        {notice}
+                    </p>
+                )}
 
                 <Button type="submit" variant="sun" disabled={loading} className="w-full">
-                    {loading ? 'Please wait…' : isLogin ? 'Log in' : 'Sign up'}
+                    {loading ? 'Please wait…' : submitLabel}
                 </Button>
             </form>
 
-            <p className="mt-5 flex justify-center gap-1.5 text-sm text-quiet">
-                {isLogin ? 'No account?' : 'Already have an account?'}
-                <Button variant="link" onClick={switchMode}>
-                    {isLogin ? 'Sign up' : 'Log in'}
+            <p className="mt-5 flex items-baseline justify-center gap-1.5 text-sm text-quiet">
+                {mode === 'login' && 'No account?'}
+                {mode === 'signup' && 'Already have an account?'}
+                {mode === 'forgot' && 'Remembered it?'}
+                <Button
+                    variant="link"
+                    onClick={() => switchMode(mode === 'login' ? 'signup' : 'login')}
+                >
+                    {mode === 'login' ? 'Sign up' : 'Log in'}
                 </Button>
             </p>
         </Dialog>

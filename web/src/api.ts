@@ -84,6 +84,14 @@ export const api = {
     login: (email: string, password: string) =>
         request<AuthResponse>('POST', '/auth/login', { email, password }),
 
+    // Always succeeds for a valid email, whether or not an account exists.
+    forgotPassword: (email: string) =>
+        request<{ message: string }>('POST', '/auth/forgot-password', { email }),
+
+    // token = the value from the emailed link. Logs the user in.
+    resetPassword: (token: string, password: string) =>
+        request<AuthResponse>('POST', '/auth/reset-password', { token, password }),
+
     listTasks: () =>
         request<Task[]>('GET', '/tasks'),
 

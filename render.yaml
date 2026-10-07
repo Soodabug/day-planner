@@ -29,6 +29,10 @@ services:
         sync: false
       - key: VAPID_SUBJECT # mailto:you@example.com
         sync: false
+      - key: BREVO_API_KEY # brevo.com -> SMTP & API -> API keys
+        sync: false
+      - key: EMAIL_FROM # sender address verified in Brevo
+        sync: false
 
   # ----- Web app (React + Vite), served as static files. Never sleeps. -----
   - type: web
