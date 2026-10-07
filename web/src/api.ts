@@ -116,5 +116,8 @@ export const api = {
         request<Reminder>('PUT', '/reminder', reminder),
 
     sendTestPush: () =>
-        request<{ devices: number; sent: number; removed: number }>('POST', '/push/test'),
+        request<{ devices: number; sent: number; removed: number; failures: number[] }>(
+            'POST',
+            '/push/test',
+        ),
 };

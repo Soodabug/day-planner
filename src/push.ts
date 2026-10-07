@@ -78,6 +78,8 @@ export async function sendToUser(userId: string, message: PushMessage) {
 
     let sent = 0;
     let removed = 0;
+    // HTTP status the push service answered for each failed send (0 = no answer at all).
+    const failures: number[] = [];
 
     for (const subscription of subscriptions) {
         try {
@@ -96,12 +98,13 @@ export async function sendToUser(userId: string, message: PushMessage) {
                 await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, subscription.id));
                 removed++;
             } else {
+                failures.push(statusCode ?? 0);
                 console.error('push failed', statusCode ?? err);
             }
         }
     }
 
-    return { devices: subscriptions.length, sent, removed };
+    return { devices: subscriptions.length, sent, removed, failures };
 }
 
 // Called by the cron endpoint every few minutes.

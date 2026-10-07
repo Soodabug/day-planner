@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { BellRing } from 'lucide-react';
-import { pushSupported, type EnableResult, type ReminderSettings } from '../hooks/useReminder';
+import {
+    pushSupported,
+    type EnableResult,
+    type ReminderSettings,
+    type TestResult,
+} from '../hooks/useReminder';
 import { ErrorAlert } from './ui/alert';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -15,7 +20,7 @@ type Props = {
     active: boolean;
     onEnable: (time: string) => Promise<EnableResult>;
     onDisable: () => Promise<boolean>;
-    onSendTest: () => Promise<boolean>;
+    onSendTest: () => Promise<TestResult>;
 };
 
 export function ReminderDialog({ open, onClose, loggedIn, onSignIn, ...form }: Props) {
@@ -51,6 +56,25 @@ export function ReminderDialog({ open, onClose, loggedIn, onSignIn, ...form }: P
     );
 }
 
+const ENABLE_PROBLEMS: Record<Exclude<EnableResult, 'ok'>, string> = {
+    blocked:
+        'Notifications are blocked for this site. Click the icon left of the address bar, set Notifications to Allow, reload the page and try again.',
+    'no-answer':
+        'Your browser did not answer the request for push notifications. Push may be switched off in its settings (in Brave: Settings, Privacy, "Use Google services for push messaging"). Try Chrome, Edge or Firefox.',
+    'browser-refused':
+        'Your browser refused to set up push notifications. Private windows and some browsers do not support them. Try a normal window in Chrome, Edge or Firefox.',
+    server: 'Could not reach the server. Wait a moment (it may be waking up) and try again.',
+};
+
+const TEST_PROBLEMS: Record<Exclude<TestResult, 'shown'>, string> = {
+    'not-shown':
+        'The test was sent, but this browser did not show it within 12 seconds. Check that notifications are allowed for your browser in your system settings, then try again.',
+    'no-device': 'This device is not set up for reminders. Click "Save time" to set it up again.',
+    rejected:
+        'The push service refused the server (code 401/403). The VAPID keys on the server do not match: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be a pair.',
+    server: 'The test could not be sent. Wait a moment (the server may be waking up) and try again.',
+};
+
 type FormProps = Pick<Props, 'settings' | 'active' | 'onEnable' | 'onDisable' | 'onSendTest'>;
 
 function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: FormProps) {
@@ -71,23 +95,24 @@ function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: For
         return run(async () => {
             const result = await onEnable(time);
             if (result === 'ok') {
-                setMessage(`Reminder set for ${time} every day.`);
-            } else if (result === 'blocked') {
-                setProblem(
-                    'Notifications are blocked. Allow them for this site in your browser settings, then try again.',
-                );
+                setMessage(`Reminder set for ${time} every day. Use "Send a test" to check it reaches you.`);
             } else {
-                setProblem('Could not turn on reminders. Check your connection and try again.');
+                setProblem(ENABLE_PROBLEMS[result]);
             }
         });
     }
 
     function handleTest() {
         return run(async () => {
-            if (await onSendTest()) {
-                setMessage('Test sent. It should appear in a few seconds.');
+            setMessage('Sending a test and waiting for it to arrive…');
+            const result = await onSendTest();
+            if (result === 'shown') {
+                setMessage(
+                    'It works: the test notification arrived on this device. If you did not see it pop up, your system is hiding it (check Do Not Disturb and the notification settings for your browser).',
+                );
             } else {
-                setProblem('The test could not be sent. Turn reminders off and on again.');
+                setMessage('');
+                setProblem(TEST_PROBLEMS[result]);
             }
         });
     }
