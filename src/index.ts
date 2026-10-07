@@ -3,7 +3,7 @@ import { serve } from '@hono/node-server';
 import { and, eq } from 'drizzle-orm';
 import { db } from './db/client.js';
 import { tasks as tasksTable, users as usersTable } from './db/schema.js';
-import { authSchema, createTaskSchema, taskIdSchema } from './validation.js';
+import { authSchema, createTaskSchema, taskIdSchema, updateTaskSchema } from './validation.js';
 import { AppError, errors } from './errors.js';
 import { checkPassword, createToken, hashPassword, requireUser, type AuthEnv } from './auth.js';
 import { cors } from 'hono/cors';
@@ -106,9 +106,29 @@ app.put('/tasks/:id', requireUser, async (c) => {
         throw new AppError('VALIDATION_FAILED', 'id must be a uuid');
     }
 
+    // The body is optional. Without one (or with an empty one) the task is marked as done.
+    const rawBody = await c.req.text();
+    let body: unknown = {};
+    if (rawBody.trim() !== '') {
+        try {
+            body = JSON.parse(rawBody);
+        } catch {
+            throw new AppError('VALIDATION_FAILED', 'body must be valid JSON');
+        }
+    }
+
+    const parsed = updateTaskSchema.safeParse(body);
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+
+    const { title, date, done } = parsed.data;
+    const nothingSent = title === undefined && date === undefined && done === undefined;
+    const changes = nothingSent ? { done: true } : { title, date, done };
+
     const [task] = await db
         .update(tasksTable)
-        .set({ done: true })
+        .set(changes)
         .where(and(eq(tasksTable.id, parsedId.data), eq(tasksTable.userId, userId)))
         .returning();
 

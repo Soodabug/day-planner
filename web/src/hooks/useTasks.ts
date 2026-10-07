@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError, clearToken, type Task } from '../api';
+import { api, ApiError, clearToken, type Task, type TaskChanges } from '../api';
 import { createLocalTask, loadLocalTasks, saveLocalTasks } from '../localTasks';
 
 type Status = 'loading' | 'ready' | 'failed';
@@ -67,8 +67,10 @@ export function useTasks(loggedIn: boolean, onLoggedOut: () => void) {
         setBusyIds((ids) => [...ids, id]);
         try {
             await action();
+            return true;
         } catch (err) {
             handleError(err);
+            return false;
         } finally {
             setBusyIds((ids) => ids.filter((x) => x !== id));
         }
@@ -93,14 +95,16 @@ export function useTasks(loggedIn: boolean, onLoggedOut: () => void) {
         }
     }
 
-    async function complete(id: string) {
+    // Change title, date and/or done. Returns true when the change was saved.
+    async function update(id: string, changes: TaskChanges) {
         if (!loggedIn) {
-            setTasks((current) => current.map((t) => (t.id === id ? { ...t, done: true } : t)));
-            return;
+            setError('');
+            setTasks((current) => current.map((t) => (t.id === id ? { ...t, ...changes } : t)));
+            return true;
         }
 
-        await withBusy(id, async () => {
-            const updated = await api.markDone(id);
+        return withBusy(id, async () => {
+            const updated = await api.updateTask(id, changes);
             setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
         });
     }
@@ -117,5 +121,5 @@ export function useTasks(loggedIn: boolean, onLoggedOut: () => void) {
         });
     }
 
-    return { tasks, status, error, busyIds, retry, add, complete, remove };
+    return { tasks, status, error, busyIds, retry, add, update, remove };
 }

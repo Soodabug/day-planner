@@ -34,7 +34,7 @@ export async function moveLocalTasksToAccount() {
     for (const task of [...remaining]) {
         const created = await api.createTask(task.title, task.date);
         if (task.done) {
-            await api.markDone(created.id);
+            await api.updateTask(created.id, { done: true });
         }
         remaining = remaining.filter((t) => t.id !== task.id);
         saveLocalTasks(remaining);

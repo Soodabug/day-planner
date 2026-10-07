@@ -27,7 +27,7 @@ function encouragement(total: number, done: number) {
 }
 
 export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
-    const { tasks, status, error, busyIds, retry, add, complete, remove } = useTasks(
+    const { tasks, status, error, busyIds, retry, add, update, remove } = useTasks(
         loggedIn,
         onLoggedOut,
     );
@@ -356,7 +356,7 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
                                             task={task}
                                             overdue={section.overdue}
                                             busy={busyIds.includes(task.id)}
-                                            onDone={complete}
+                                            onUpdate={update}
                                             onDelete={remove}
                                         />
                                     ))}

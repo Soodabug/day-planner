@@ -8,6 +8,8 @@ export type Task = {
     done: boolean;
 };
 
+export type TaskChanges = Partial<Pick<Task, 'title' | 'date' | 'done'>>;
+
 export type User = {
     id: string;
     email: string;
@@ -81,8 +83,9 @@ export const api = {
     createTask: (title: string, date: string) =>
         request<Task>('POST', '/tasks', { title, date }),
 
-    markDone: (id: string) =>
-        request<Task>('PUT', `/tasks/${id}`),
+    // Send only the fields that should change.
+    updateTask: (id: string, changes: TaskChanges) =>
+        request<Task>('PUT', `/tasks/${id}`, changes),
 
     deleteTask: (id: string) =>
         request<{ message: string }>('DELETE', `/tasks/${id}`),
