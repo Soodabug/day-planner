@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { and, eq } from 'drizzle-orm';
 import { db } from './db/client.js';
@@ -18,6 +18,15 @@ app.use(
     }),
 );
 
+// Reads the JSON body. A missing or malformed body is a client error (400), not a crash (500).
+async function readJson(c: Context<AuthEnv>): Promise<unknown> {
+    try {
+        return await c.req.json();
+    } catch {
+        throw new AppError('VALIDATION_FAILED', 'body must be valid JSON');
+    }
+}
+
 app.get('/', (c) => {
     return c.text('Day Planner API');
 });
@@ -25,7 +34,7 @@ app.get('/', (c) => {
 // ---------- auth ----------
 
 app.post('/auth/signup', async (c) => {
-    const parsed = authSchema.safeParse(await c.req.json());
+    const parsed = authSchema.safeParse(await readJson(c));
     if (!parsed.success) {
         throw new AppError('VALIDATION_FAILED', parsed.error.issues);
     }
@@ -50,7 +59,7 @@ app.post('/auth/signup', async (c) => {
 });
 
 app.post('/auth/login', async (c) => {
-    const parsed = authSchema.safeParse(await c.req.json());
+    const parsed = authSchema.safeParse(await readJson(c));
     if (!parsed.success) {
         throw new AppError('VALIDATION_FAILED', parsed.error.issues);
     }
@@ -85,7 +94,7 @@ app.get('/tasks', requireUser, async (c) => {
 app.post('/tasks', requireUser, async (c) => {
     const userId = c.get('userId');
 
-    const parsed = createTaskSchema.safeParse(await c.req.json());
+    const parsed = createTaskSchema.safeParse(await readJson(c));
     if (!parsed.success) {
         throw new AppError('VALIDATION_FAILED', parsed.error.issues);
     }
