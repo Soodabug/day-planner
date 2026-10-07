@@ -1,23 +1,20 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import { api, ApiError, type Reminder } from '../api';
 import { playChime } from '../lib/sound';
 
-export type ReminderSettings = {
-    enabled: boolean;
-    time: string; // HH:MM, 24h
-    message: string; // the user's own reminder text, '' when none
-    nextDate: string | null; // local date of the next reminder, null when off
-};
-
-const NO_REMINDER: ReminderSettings = { enabled: false, time: '09:00', message: '', nextDate: null };
-
-// Why turning reminders on worked or did not. The dialog turns each into a message.
-export type EnableResult =
+// Why setting up this device for notifications worked or did not.
+export type DeviceResult =
     | 'ok'
     | 'blocked' // the user or the browser refused notification permission
     | 'no-answer' // the browser never answered the subscribe request
     | 'browser-refused' // the browser rejected the subscribe request
     | 'server'; // our API could not be reached or refused
+
+// Adding a reminder can also fail for reasons of its own.
+export type AddResult =
+    | DeviceResult
+    | 'past' // the chosen date and time have already passed
+    | 'limit'; // too many reminders
 
 // What happened to a test notification.
 export type TestResult =
@@ -26,6 +23,13 @@ export type TestResult =
     | 'no-device' // this browser is not subscribed
     | 'rejected' // the push service refused our server (wrong VAPID keys)
     | 'server'; // our API could not be reached or the push service did not answer
+
+export type ReminderDraft = {
+    text: string;
+    date: string; // YYYY-MM-DD
+    time: string; // HH:MM
+    repeatDaily: boolean;
+};
 
 const SERVICE_WORKER_URL = '/sw.js';
 const BROWSER_TIMEOUT_MS = 20_000;
@@ -113,30 +117,33 @@ export async function forgetThisDevice() {
     }
 }
 
-// The daily reminder. The server sends it as a push notification,
-// so it arrives even when Day Planner is not open. Needs an account.
+// The user's reminders. The server sends each one as a push notification at its
+// date and time, so it arrives even when Day Planner is not open. Needs an account.
 export function useReminder(loggedIn: boolean) {
-    const [settings, setSettings] = useState<ReminderSettings>(NO_REMINDER);
-    const [deviceSubscribed, setDeviceSubscribed] = useState(false);
+    const [reminders, setReminders] = useState<Reminder[]>([]);
+    const [deviceReady, setDeviceReady] = useState(false);
 
-    // Load the saved setting and check this device. No permission prompt here.
+    const reload = useCallback(async () => {
+        try {
+            setReminders(await api.listReminders());
+        } catch {
+            // Keep what we have; the tasks hook handles a lost login.
+        }
+    }, []);
+
+    // Load the reminders and check this device. No permission prompt here.
     useEffect(() => {
         if (!loggedIn) return;
         let cancelled = false;
 
-        Promise.all([api.getReminder(), currentSubscription()])
-            .then(([reminder, subscription]) => {
+        Promise.all([api.listReminders(), currentSubscription()])
+            .then(([loaded, subscription]) => {
                 if (cancelled) return;
-                setSettings({
-                    enabled: reminder.enabled,
-                    time: reminder.time,
-                    message: reminder.message,
-                    nextDate: reminder.nextDate,
-                });
-                setDeviceSubscribed(subscription !== null);
+                setReminders(loaded);
+                setDeviceReady(subscription !== null);
             })
             .catch(() => {
-                // Reminders stay shown as off; the tasks hook handles a lost login.
+                // Shown as empty; the tasks hook handles a lost login.
             });
 
         return () => {
@@ -144,25 +151,25 @@ export function useReminder(loggedIn: boolean) {
         };
     }, [loggedIn]);
 
-    // When a reminder arrives while Day Planner is open, play a chime as well.
-    // (With the app closed, the system's own notification sound is all there is.)
+    // When a reminder arrives while Day Planner is open: play a chime as well
+    // (with the app closed, the system's own notification sound is all there is)
+    // and refresh the list, because a one-time reminder is gone once it has fired.
     useEffect(() => {
-        if (!pushSupported()) return;
+        if (!pushSupported() || !loggedIn) return;
 
         function onMessage(event: MessageEvent) {
-            if (event.data?.type === 'reminder-shown') playChime();
+            if (event.data?.type !== 'reminder-shown') return;
+            playChime();
+            reload();
         }
 
         navigator.serviceWorker.addEventListener('message', onMessage);
         return () => navigator.serviceWorker.removeEventListener('message', onMessage);
-    }, []);
+    }, [loggedIn, reload]);
 
-    // On: the reminder is enabled and this device will receive it.
-    const active = loggedIn && settings.enabled && deviceSubscribed;
-
-    // Runs only when the user clicks "Turn on reminders": this is the one place
-    // that asks for notification permission.
-    async function enable(time: string, message: string): Promise<EnableResult> {
+    // Makes this device able to receive notifications. This is the one place that
+    // asks for notification permission, and it only runs after a click.
+    async function setUpDevice(): Promise<DeviceResult> {
         let permission: NotificationPermission;
         try {
             permission = await orGiveUp(Notification.requestPermission());
@@ -187,42 +194,49 @@ export function useReminder(loggedIn: boolean) {
 
         try {
             await api.savePushSubscription(subscription.toJSON());
-            const saved = await api.saveReminder({
-                enabled: true,
-                time,
-                message,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            });
-            setSettings({
-                enabled: true,
-                time: saved.time,
-                message: saved.message,
-                nextDate: saved.nextDate,
-            });
         } catch {
             return 'server';
         }
 
-        setDeviceSubscribed(true);
+        setDeviceReady(true);
         return 'ok';
     }
 
-    // Turns the reminder off for the account and removes this device.
-    async function disable() {
+    // Adds a reminder. Sets up this device first if it is not ready yet.
+    async function add(draft: ReminderDraft): Promise<AddResult> {
+        if (!deviceReady) {
+            const device = await setUpDevice();
+            if (device !== 'ok') return device;
+        }
+
         try {
-            await api.saveReminder({
-                enabled: false,
-                time: settings.time,
-                message: settings.message,
+            const created = await api.createReminder({
+                ...draft,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             });
-            await forgetThisDevice();
-            setSettings({ ...settings, enabled: false, nextDate: null });
-            setDeviceSubscribed(false);
-            return true;
-        } catch {
-            return false;
+            setReminders((current) =>
+                [...current, created].sort(
+                    (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+                ),
+            );
+            return 'ok';
+        } catch (err) {
+            if (err instanceof ApiError && err.code === 'REMINDER_IN_PAST') return 'past';
+            if (err instanceof ApiError && err.code === 'TOO_MANY_REMINDERS') return 'limit';
+            return 'server';
         }
+    }
+
+    // Returns true when the reminder is gone.
+    async function remove(id: string) {
+        try {
+            await api.deleteReminder(id);
+        } catch (err) {
+            // Already gone (it fired in the meantime) counts as removed.
+            if (!(err instanceof ApiError && err.code === 'NOT_FOUND')) return false;
+        }
+        setReminders((current) => current.filter((r) => r.id !== id));
+        return true;
     }
 
     // Asks the server to push a test notification, then checks that this
@@ -257,5 +271,5 @@ export function useReminder(loggedIn: boolean) {
         }
     }
 
-    return { settings, active, enable, disable, sendTest };
+    return { reminders, deviceReady, add, remove, setUpDevice, sendTest };
 }

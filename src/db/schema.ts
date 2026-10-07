@@ -44,16 +44,21 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
     createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
-// The daily reminder of one user. It is a user setting, not part of a task.
-export const reminderSettings = pgTable('reminder_settings', {
+// A reminder the user wrote: a text that is pushed to their devices at a date and time.
+// It is separate from tasks (tasks only have a date).
+export const reminders = pgTable('reminders', {
+    id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id')
-        .primaryKey()
+        .notNull()
         .references(() => users.id, { onDelete: 'cascade' }),
-    enabled: boolean('enabled').notNull().default(false),
-    time: text('time').notNull(), // HH:MM (24h) in the user's timezone
+    text: text('text').notNull(),
+    // The day it fires. For a daily reminder: the first day.
+    date: date('date').notNull(),
+    time: text('time').notNull(), // HH:MM (24h) in the reminder's timezone
     timezone: text('timezone').notNull(), // IANA name, e.g. Europe/Rome
-    // Optional text the user wrote for their reminder. null = none.
-    message: text('message'),
-    // The user's local date of the last reminder, so each day gets only one.
+    // false = fires once on its date, then it is deleted. true = fires every day.
+    repeatDaily: boolean('repeat_daily').notNull().default(false),
+    // The local date it last fired, so a daily reminder fires once per day.
     lastSentDate: date('last_sent_date'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -34,12 +34,12 @@ function isTimezone(value: string) {
     }
 }
 
-export const reminderSchema = z.object({
-    enabled: z.boolean(),
+export const createReminderSchema = z.object({
+    text: z.string().trim().min(1).max(120),
+    date: z.iso.date(), // the day it fires (first day for a daily one)
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), // HH:MM, 24h
+    repeatDaily: z.boolean(),
     timezone: z.string().refine(isTimezone, 'must be an IANA timezone like Europe/Rome'),
-    // The user's own reminder text. Optional; empty means none.
-    message: z.string().trim().max(120).optional(),
 });
 
 export const taskIdSchema = z.uuid();

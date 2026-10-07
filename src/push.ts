@@ -1,7 +1,7 @@
 import webpush from 'web-push';
 import { and, eq, isNull, ne, or } from 'drizzle-orm';
 import { db } from './db/client.js';
-import { pushSubscriptions, reminderSettings, tasks as tasksTable } from './db/schema.js';
+import { pushSubscriptions, reminders, tasks as tasksTable } from './db/schema.js';
 
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY!;
 
@@ -122,42 +122,61 @@ export async function sendToUser(userId: string, message: PushMessage) {
     return { devices: subscriptions.length, sent, removed, failures };
 }
 
+type Reminder = typeof reminders.$inferSelect;
+
+// What should happen to a reminder right now?
+//   'send'    its time has come
+//   'expired' a one-time reminder whose day went by while the server could not send it
+//   'wait'    not yet (or today's daily one is done)
+export function reminderState(
+    reminder: Pick<Reminder, 'date' | 'time' | 'repeatDaily' | 'lastSentDate'>,
+    local: { date: string; time: string },
+): 'send' | 'expired' | 'wait' {
+    if (reminder.repeatDaily) {
+        if (local.date < reminder.date) return 'wait';
+        if (reminder.lastSentDate === local.date) return 'wait';
+        return local.time >= reminder.time ? 'send' : 'wait';
+    }
+
+    if (local.date < reminder.date) return 'wait';
+    if (local.date > reminder.date) return 'expired';
+    return local.time >= reminder.time ? 'send' : 'wait';
+}
+
 // Called by the cron endpoint every few minutes, and by the server itself
-// every minute while it is awake.
-// A user is due when their local time has reached their reminder time
-// and they did not get today's reminder yet.
-// force = ignore time and "already sent" (for local testing); it does not mark anything as sent.
+// every minute while it is awake. Sends every reminder whose time has come.
+// force = send all reminders now (for local testing); nothing is marked or deleted.
 export async function sendDueReminders(force = false) {
-    const allEnabled = await db
-        .select()
-        .from(reminderSettings)
-        .where(eq(reminderSettings.enabled, true));
+    const all = await db.select().from(reminders);
 
     let due = 0;
     let sent = 0;
     let removed = 0;
 
-    for (const settings of allEnabled) {
-        const local = localDateAndTime(settings.timezone);
-        const isDue = local.time >= settings.time && settings.lastSentDate !== local.date;
-        if (!isDue && !force) continue;
+    for (const reminder of all) {
+        const local = localDateAndTime(reminder.timezone);
+        const state = force ? 'send' : reminderState(reminder, local);
 
-        // Claim today's reminder before sending. If two runs overlap (cron and the
-        // server's own timer), only the one that wins this update sends.
+        if (state === 'wait') continue;
+
+        if (state === 'expired') {
+            await db.delete(reminders).where(eq(reminders.id, reminder.id));
+            continue;
+        }
+
+        // Claim it before sending. If two runs overlap (cron and the server's own
+        // timer), only the one that wins this update sends.
         if (!force) {
             const claimed = await db
-                .update(reminderSettings)
+                .update(reminders)
                 .set({ lastSentDate: local.date })
                 .where(
                     and(
-                        eq(reminderSettings.userId, settings.userId),
-                        or(
-                            isNull(reminderSettings.lastSentDate),
-                            ne(reminderSettings.lastSentDate, local.date),
-                        ),
+                        eq(reminders.id, reminder.id),
+                        or(isNull(reminders.lastSentDate), ne(reminders.lastSentDate, local.date)),
                     ),
                 )
-                .returning({ userId: reminderSettings.userId });
+                .returning({ id: reminders.id });
             if (claimed.length === 0) continue;
         }
         due++;
@@ -165,23 +184,28 @@ export async function sendDueReminders(force = false) {
         const tasks = await db
             .select()
             .from(tasksTable)
-            .where(eq(tasksTable.userId, settings.userId));
+            .where(eq(tasksTable.userId, reminder.userId));
 
         const result = await sendToUser(
-            settings.userId,
-            reminderText(tasks, local.date, settings.message),
+            reminder.userId,
+            reminderText(tasks, local.date, reminder.text),
         );
         sent += result.sent;
         removed += result.removed;
+        if (force) continue;
 
-        // Done for today when a push went out, or when there is no device left to try.
-        // If every send failed for another reason, give the claim back so the next run tries again.
+        // Done when a push went out, or when there is no device left to try.
         const finished = result.sent > 0 || result.devices === result.removed;
-        if (!finished && !force) {
+
+        if (!finished) {
+            // Every send failed for another reason: give the claim back so the next run tries again.
             await db
-                .update(reminderSettings)
-                .set({ lastSentDate: settings.lastSentDate })
-                .where(eq(reminderSettings.userId, settings.userId));
+                .update(reminders)
+                .set({ lastSentDate: reminder.lastSentDate })
+                .where(eq(reminders.id, reminder.id));
+        } else if (!reminder.repeatDaily) {
+            // A one-time reminder has done its job.
+            await db.delete(reminders).where(eq(reminders.id, reminder.id));
         }
     }
 

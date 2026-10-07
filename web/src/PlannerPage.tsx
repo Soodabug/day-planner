@@ -37,6 +37,7 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
     const [date, setDate] = useState(() => daysFromToday(0));
     const [adding, setAdding] = useState(false);
     const [reminderOpen, setReminderOpen] = useState(false);
+    const reminderCount = loggedIn ? reminder.reminders.length : 0;
     const titleRef = useRef<HTMLInputElement>(null);
 
     const today = daysFromToday(0);
@@ -110,19 +111,24 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
                             size="sm"
                             onClick={() => setReminderOpen(true)}
                             aria-label={
-                                reminder.active
-                                    ? `Daily reminder at ${reminder.settings.time}`
-                                    : 'Set a daily reminder'
+                                reminderCount > 0
+                                    ? `Reminders, ${reminderCount} coming up`
+                                    : 'Add a reminder'
                             }
                         >
-                            {reminder.active ? (
+                            {reminderCount > 0 ? (
                                 <BellRing aria-hidden="true" />
                             ) : (
                                 <Bell aria-hidden="true" />
                             )}
                             <span className="hidden sm:inline">
-                                {reminder.active ? `Daily at ${reminder.settings.time}` : 'Remind me'}
+                                {reminderCount > 0 ? 'Reminders' : 'Remind me'}
                             </span>
+                            {reminderCount > 0 && (
+                                <span className="rounded-full bg-ink px-1.5 py-0.5 text-xs leading-none font-semibold text-sun tabular-nums">
+                                    {reminderCount}
+                                </span>
+                            )}
                         </Button>
                         {loggedIn ? (
                             <Button variant="ghost" size="sm" onClick={logout}>
@@ -374,10 +380,11 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
                 onClose={() => setReminderOpen(false)}
                 loggedIn={loggedIn}
                 onSignIn={onSignIn}
-                settings={reminder.settings}
-                active={reminder.active}
-                onEnable={reminder.enable}
-                onDisable={reminder.disable}
+                reminders={reminder.reminders}
+                deviceReady={reminder.deviceReady}
+                onAdd={reminder.add}
+                onRemove={reminder.remove}
+                onSetUpDevice={reminder.setUpDevice}
                 onSendTest={reminder.sendTest}
             />
         </div>

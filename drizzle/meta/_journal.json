@@ -43,6 +43,20 @@
       "when": 1791372603421,
       "tag": "0005_great_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791373164898,
+      "tag": "0006_small_slayback",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791373166706,
+      "tag": "0007_rainy_peter_quill",
+      "breakpoints": true
     }
   ]
 }

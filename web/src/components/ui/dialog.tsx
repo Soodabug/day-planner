@@ -39,7 +39,8 @@ export function Dialog({ open, onClose, title, description, children }: Props) {
                     initial={{ opacity: 0, y: 24, scale: 0.94 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-                    className="rounded-lg border-2 border-ink bg-paper p-6 text-ink shadow-block"
+                    // Taller than the screen (long reminder list, small phone): scroll inside the dialog.
+                    className="max-h-[calc(100svh-2rem)] overflow-y-auto rounded-lg border-2 border-ink bg-paper p-6 text-ink shadow-block"
                 >
                     <div className="mb-5 flex items-start justify-between gap-4">
                         <div>

@@ -10,13 +10,17 @@ export type Task = {
 
 export type TaskChanges = Partial<Pick<Task, 'title' | 'date' | 'done'>>;
 
-// The daily reminder of the logged-in user. timezone is null until it is first saved.
+// A reminder the user wrote. It notifies their devices at its date and time.
 export type Reminder = {
-    enabled: boolean;
+    id: string;
+    text: string;
+    date: string; // YYYY-MM-DD: the day it fires (first day for a daily one)
     time: string; // HH:MM, 24h
-    timezone: string | null;
-    message: string; // the user's own reminder text, '' when none
-    nextDate: string | null; // local date (YYYY-MM-DD) of the next reminder, null when off
+    repeatDaily: boolean; // false = once on its date, true = every day
+};
+
+export type NewReminder = Omit<Reminder, 'id'> & {
+    timezone: string; // IANA name of the user's timezone, e.g. Europe/Rome
 };
 
 export type User = {
@@ -119,11 +123,14 @@ export const api = {
     deletePushSubscription: (endpoint: string) =>
         request<{ message: string }>('DELETE', '/push/subscriptions', { endpoint }),
 
-    getReminder: () =>
-        request<Reminder>('GET', '/reminder'),
+    listReminders: () =>
+        request<Reminder[]>('GET', '/reminders'),
 
-    saveReminder: (reminder: { enabled: boolean; time: string; timezone: string; message: string }) =>
-        request<Reminder>('PUT', '/reminder', reminder),
+    createReminder: (reminder: NewReminder) =>
+        request<Reminder>('POST', '/reminders', reminder),
+
+    deleteReminder: (id: string) =>
+        request<{ message: string }>('DELETE', `/reminders/${id}`),
 
     sendTestPush: () =>
         request<{ devices: number; sent: number; removed: number; failures: number[] }>(

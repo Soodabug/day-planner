@@ -1,11 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { db } from './db/client.js';
 import {
     passwordResets,
     pushSubscriptions,
-    reminderSettings,
+    reminders,
     tasks as tasksTable,
     users as usersTable,
 } from './db/schema.js';
@@ -15,8 +15,8 @@ import {
     forgotPasswordSchema,
     resetPasswordSchema,
     pushSubscriptionSchema,
+    createReminderSchema,
     pushUnsubscribeSchema,
-    reminderSchema,
     taskIdSchema,
     updateTaskSchema,
 } from './validation.js';
@@ -27,7 +27,6 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { sendEmail } from './email.js';
 import {
     localDateAndTime,
-    reminderText,
     sendDueReminders,
     sendToUser,
     vapidPublicKey,
@@ -358,88 +357,100 @@ app.delete('/push/subscriptions', requireUser, async (c) => {
     return c.json({ message: 'Subscription removed' });
 });
 
-app.get('/reminder', requireUser, async (c) => {
+const MAX_REMINDERS_PER_USER = 50;
+
+// What the app needs to show a reminder.
+const reminderFields = {
+    id: reminders.id,
+    text: reminders.text,
+    date: reminders.date,
+    time: reminders.time,
+    repeatDaily: reminders.repeatDaily,
+};
+
+app.get('/reminders', requireUser, async (c) => {
     const userId = c.get('userId');
 
-    const [settings] = await db
-        .select()
-        .from(reminderSettings)
-        .where(eq(reminderSettings.userId, userId));
+    const result = await db
+        .select(reminderFields)
+        .from(reminders)
+        .where(eq(reminders.userId, userId))
+        .orderBy(asc(reminders.date), asc(reminders.time));
 
-    if (!settings) {
-        return c.json({ enabled: false, time: '09:00', timezone: null, message: '', nextDate: null });
-    }
-
-    return c.json({
-        enabled: settings.enabled,
-        time: settings.time,
-        timezone: settings.timezone,
-        message: settings.message ?? '',
-        nextDate: nextReminderDate(settings),
-    });
+    return c.json(result);
 });
 
-// The user's local date (YYYY-MM-DD) of their next reminder, or null when reminders are off.
-function nextReminderDate(settings: {
-    enabled: boolean;
-    timezone: string;
-    lastSentDate: string | null;
-}) {
-    if (!settings.enabled) return null;
-
-    const today = localDateAndTime(settings.timezone).date;
-    if (settings.lastSentDate !== today) return today;
-
-    // Today's reminder is done (or its time had passed when it was set): tomorrow.
-    const tomorrow = new Date(`${today}T12:00:00Z`);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    return tomorrow.toISOString().slice(0, 10);
-}
-
-app.put('/reminder', requireUser, async (c) => {
+app.post('/reminders', requireUser, async (c) => {
     const userId = c.get('userId');
 
-    const parsed = reminderSchema.safeParse(await readJson(c));
+    const parsed = createReminderSchema.safeParse(await readJson(c));
     if (!parsed.success) {
         throw new AppError('VALIDATION_FAILED', parsed.error.issues);
     }
-    const { enabled, time, timezone } = parsed.data;
-    const message = parsed.data.message || null;
-
-    // If today's time is already behind us, start tomorrow instead of sending right away.
+    const { text, date, time, repeatDaily, timezone } = parsed.data;
     const local = localDateAndTime(timezone);
-    const lastSentDate = local.time > time ? local.date : null;
 
-    await db
-        .insert(reminderSettings)
-        .values({ userId, enabled, time, timezone, message, lastSentDate })
-        .onConflictDoUpdate({
-            target: reminderSettings.userId,
-            set: { enabled, time, timezone, message, lastSentDate },
-        });
+    let firstDate = date;
+    if (repeatDaily) {
+        // A daily reminder never starts in the past. If today's time is already
+        // behind us, it starts tomorrow.
+        if (firstDate < local.date) firstDate = local.date;
+        if (firstDate === local.date && time < local.time) firstDate = nextDay(local.date);
+    } else if (date < local.date || (date === local.date && time < local.time)) {
+        throw new AppError('REMINDER_IN_PAST');
+    }
 
-    return c.json({
-        enabled,
-        time,
-        timezone,
-        message: message ?? '',
-        nextDate: nextReminderDate({ enabled, timezone, lastSentDate }),
-    });
+    const existing = await db
+        .select({ id: reminders.id })
+        .from(reminders)
+        .where(eq(reminders.userId, userId));
+    if (existing.length >= MAX_REMINDERS_PER_USER) {
+        throw new AppError('TOO_MANY_REMINDERS');
+    }
+
+    const [reminder] = await db
+        .insert(reminders)
+        .values({ userId, text, date: firstDate, time, repeatDaily, timezone })
+        .returning(reminderFields);
+
+    return c.json(reminder, 201);
 });
 
-// Sends the user's reminder to their own devices right now,
-// exactly as the daily one will look. Does not count as today's reminder.
+app.delete('/reminders/:id', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const parsedId = taskIdSchema.safeParse(c.req.param('id'));
+    if (!parsedId.success) {
+        throw new AppError('VALIDATION_FAILED', 'id must be a uuid');
+    }
+
+    const [reminder] = await db
+        .delete(reminders)
+        .where(and(eq(reminders.id, parsedId.data), eq(reminders.userId, userId)))
+        .returning({ id: reminders.id });
+
+    if (!reminder) {
+        throw new AppError('NOT_FOUND');
+    }
+
+    return c.json({ message: 'Reminder deleted successfully' });
+});
+
+// YYYY-MM-DD of the day after the given one.
+function nextDay(date: string) {
+    const next = new Date(`${date}T12:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    return next.toISOString().slice(0, 10);
+}
+
+// Sends a test notification to the logged-in user's own devices, right now.
 app.post('/push/test', requireUser, async (c) => {
     const userId = c.get('userId');
 
-    const [settings] = await db
-        .select()
-        .from(reminderSettings)
-        .where(eq(reminderSettings.userId, userId));
-    const tasks = await db.select().from(tasksTable).where(eq(tasksTable.userId, userId));
-    const today = localDateAndTime(settings?.timezone ?? 'UTC').date;
-
-    const result = await sendToUser(userId, reminderText(tasks, today, settings?.message));
+    const result = await sendToUser(userId, {
+        title: 'Day Planner reminders work',
+        body: 'This is how your reminders will look and sound.',
+    });
 
     return c.json(result);
 });
