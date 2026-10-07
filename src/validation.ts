@@ -43,6 +43,7 @@ export const reminderSchema = z.object({
 export const taskIdSchema = z.uuid();
 
 export const authSchema = z.object({
-    email: z.email(),
+    // Emails are not case sensitive: " Name@Mail.com " and "name@mail.com" are the same account.
+    email: z.string().trim().toLowerCase().pipe(z.email()),
     password: z.string().min(8),
 });

@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from './db/client.js';
 import {
     pushSubscriptions,
@@ -58,7 +58,8 @@ app.post('/auth/signup', async (c) => {
     const [existing] = await db
         .select()
         .from(usersTable)
-        .where(eq(usersTable.email, email));
+        // lower(): also finds accounts created with capital letters before emails were normalized
+        .where(eq(sql`lower(${usersTable.email})`, email));
     if (existing) {
         throw new AppError('EMAIL_TAKEN');
     }
@@ -83,7 +84,8 @@ app.post('/auth/login', async (c) => {
     const [user] = await db
         .select()
         .from(usersTable)
-        .where(eq(usersTable.email, email));
+        // lower(): also finds accounts created with capital letters before emails were normalized
+        .where(eq(sql`lower(${usersTable.email})`, email));
 
     if (!user || !(await checkPassword(password, user.passwordHash))) {
         throw new AppError('INVALID_CREDENTIALS');
