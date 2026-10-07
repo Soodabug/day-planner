@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, ne, or } from 'drizzle-orm';
 import { db } from './db/client.js';
 import { pushSubscriptions, reminderSettings, tasks as tasksTable } from './db/schema.js';
 
@@ -42,8 +42,23 @@ export function localDateAndTime(timezone: string, now = new Date()) {
     };
 }
 
+// The notification for one user.
+// With a message of their own, that is the headline and the plan goes below it.
+export function reminderText(
+    tasks: TaskForReminder[],
+    today: string,
+    message?: string | null,
+): PushMessage {
+    const plan = planSummary(tasks, today);
+    if (!message) return plan;
+
+    // "Your plan: 2 for today. Start with ..." / "What is the plan today? Nothing planned yet..."
+    const joiner = /[.?!]$/.test(plan.title) ? ' ' : '. ';
+    return { title: message, body: plan.title + joiner + plan.body };
+}
+
 // Same rules as the app: overdue = not done AND date before today.
-export function reminderText(tasks: TaskForReminder[], today: string): PushMessage {
+function planSummary(tasks: TaskForReminder[], today: string): PushMessage {
     const open = tasks
         .filter((t) => !t.done)
         .sort((a, b) => a.date.localeCompare(b.date));
@@ -107,7 +122,8 @@ export async function sendToUser(userId: string, message: PushMessage) {
     return { devices: subscriptions.length, sent, removed, failures };
 }
 
-// Called by the cron endpoint every few minutes.
+// Called by the cron endpoint every few minutes, and by the server itself
+// every minute while it is awake.
 // A user is due when their local time has reached their reminder time
 // and they did not get today's reminder yet.
 // force = ignore time and "already sent" (for local testing); it does not mark anything as sent.
@@ -125,6 +141,25 @@ export async function sendDueReminders(force = false) {
         const local = localDateAndTime(settings.timezone);
         const isDue = local.time >= settings.time && settings.lastSentDate !== local.date;
         if (!isDue && !force) continue;
+
+        // Claim today's reminder before sending. If two runs overlap (cron and the
+        // server's own timer), only the one that wins this update sends.
+        if (!force) {
+            const claimed = await db
+                .update(reminderSettings)
+                .set({ lastSentDate: local.date })
+                .where(
+                    and(
+                        eq(reminderSettings.userId, settings.userId),
+                        or(
+                            isNull(reminderSettings.lastSentDate),
+                            ne(reminderSettings.lastSentDate, local.date),
+                        ),
+                    ),
+                )
+                .returning({ userId: reminderSettings.userId });
+            if (claimed.length === 0) continue;
+        }
         due++;
 
         const tasks = await db
@@ -132,17 +167,20 @@ export async function sendDueReminders(force = false) {
             .from(tasksTable)
             .where(eq(tasksTable.userId, settings.userId));
 
-        const result = await sendToUser(settings.userId, reminderText(tasks, local.date));
+        const result = await sendToUser(
+            settings.userId,
+            reminderText(tasks, local.date, settings.message),
+        );
         sent += result.sent;
         removed += result.removed;
 
         // Done for today when a push went out, or when there is no device left to try.
-        // If every send failed for another reason, the next run tries again.
+        // If every send failed for another reason, give the claim back so the next run tries again.
         const finished = result.sent > 0 || result.devices === result.removed;
-        if (finished && !force) {
+        if (!finished && !force) {
             await db
                 .update(reminderSettings)
-                .set({ lastSentDate: local.date })
+                .set({ lastSentDate: settings.lastSentDate })
                 .where(eq(reminderSettings.userId, settings.userId));
         }
     }

@@ -6,6 +6,7 @@ import {
     type ReminderSettings,
     type TestResult,
 } from '../hooks/useReminder';
+import { formatDate } from '../lib/dates';
 import { ErrorAlert } from './ui/alert';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -18,7 +19,7 @@ type Props = {
     onSignIn: () => void;
     settings: ReminderSettings;
     active: boolean;
-    onEnable: (time: string) => Promise<EnableResult>;
+    onEnable: (time: string, message: string) => Promise<EnableResult>;
     onDisable: () => Promise<boolean>;
     onSendTest: () => Promise<TestResult>;
 };
@@ -79,6 +80,7 @@ type FormProps = Pick<Props, 'settings' | 'active' | 'onEnable' | 'onDisable' | 
 
 function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: FormProps) {
     const [time, setTime] = useState(settings.time);
+    const [text, setText] = useState(settings.message);
     const [message, setMessage] = useState('');
     const [problem, setProblem] = useState('');
     const [working, setWorking] = useState(false);
@@ -93,9 +95,9 @@ function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: For
 
     function handleEnable() {
         return run(async () => {
-            const result = await onEnable(time);
+            const result = await onEnable(time, text);
             if (result === 'ok') {
-                setMessage(`Reminder set for ${time} every day. Use "Send a test" to check it reaches you.`);
+                setMessage('Saved. Use "Send a test" to see and hear it now.');
             } else {
                 setProblem(ENABLE_PROBLEMS[result]);
             }
@@ -142,10 +144,31 @@ function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: For
                 />
             </div>
 
+            <div className="flex flex-col gap-1.5">
+                <label htmlFor="reminder-text" className="text-sm font-semibold">
+                    What should it say?{' '}
+                    <span className="font-normal text-quiet">(optional)</span>
+                </label>
+                <Input
+                    id="reminder-text"
+                    type="text"
+                    placeholder="Drink water, then start with the hardest task"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    maxLength={120}
+                />
+            </div>
+
             <Button variant="sun" onClick={handleEnable} disabled={!time || working}>
                 <BellRing aria-hidden="true" />
-                {active ? 'Save time' : 'Turn on reminders'}
+                {active ? 'Save' : 'Turn on reminders'}
             </Button>
+
+            {active && settings.nextDate && (
+                <p className="rounded-md border-2 border-ink bg-haze px-3 py-2 text-sm font-medium">
+                    Next reminder: {formatDate(settings.nextDate).toLowerCase()} at {settings.time}
+                </p>
+            )}
 
             {active && (
                 <div className="flex gap-2">
@@ -176,8 +199,9 @@ function ReminderForm({ settings, active, onEnable, onDisable, onSendTest }: For
             {problem && <ErrorAlert>{problem}</ErrorAlert>}
 
             <p className="text-xs text-quiet">
-                It can arrive a few minutes after the time you pick. Turn it on once on each
-                device where you want it.
+                It can arrive a few minutes after the time you pick. The sound is your
+                system's notification sound, so keep that on. Turn reminders on once on each
+                device where you want them.
             </p>
         </div>
     );

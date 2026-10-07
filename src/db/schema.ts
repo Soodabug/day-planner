@@ -52,6 +52,8 @@ export const reminderSettings = pgTable('reminder_settings', {
     enabled: boolean('enabled').notNull().default(false),
     time: text('time').notNull(), // HH:MM (24h) in the user's timezone
     timezone: text('timezone').notNull(), // IANA name, e.g. Europe/Rome
+    // Optional text the user wrote for their reminder. null = none.
+    message: text('message'),
     // The user's local date of the last reminder, so each day gets only one.
     lastSentDate: date('last_sent_date'),
 });

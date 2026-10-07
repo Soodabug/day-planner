@@ -15,6 +15,8 @@ export type Reminder = {
     enabled: boolean;
     time: string; // HH:MM, 24h
     timezone: string | null;
+    message: string; // the user's own reminder text, '' when none
+    nextDate: string | null; // local date (YYYY-MM-DD) of the next reminder, null when off
 };
 
 export type User = {
@@ -120,7 +122,7 @@ export const api = {
     getReminder: () =>
         request<Reminder>('GET', '/reminder'),
 
-    saveReminder: (reminder: { enabled: boolean; time: string; timezone: string }) =>
+    saveReminder: (reminder: { enabled: boolean; time: string; timezone: string; message: string }) =>
         request<Reminder>('PUT', '/reminder', reminder),
 
     sendTestPush: () =>

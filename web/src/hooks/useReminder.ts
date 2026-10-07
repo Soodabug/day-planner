@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { playChime } from '../lib/sound';
 
 export type ReminderSettings = {
     enabled: boolean;
     time: string; // HH:MM, 24h
+    message: string; // the user's own reminder text, '' when none
+    nextDate: string | null; // local date of the next reminder, null when off
 };
+
+const NO_REMINDER: ReminderSettings = { enabled: false, time: '09:00', message: '', nextDate: null };
 
 // Why turning reminders on worked or did not. The dialog turns each into a message.
 export type EnableResult =
@@ -111,7 +116,7 @@ export async function forgetThisDevice() {
 // The daily reminder. The server sends it as a push notification,
 // so it arrives even when Day Planner is not open. Needs an account.
 export function useReminder(loggedIn: boolean) {
-    const [settings, setSettings] = useState<ReminderSettings>({ enabled: false, time: '09:00' });
+    const [settings, setSettings] = useState<ReminderSettings>(NO_REMINDER);
     const [deviceSubscribed, setDeviceSubscribed] = useState(false);
 
     // Load the saved setting and check this device. No permission prompt here.
@@ -122,7 +127,12 @@ export function useReminder(loggedIn: boolean) {
         Promise.all([api.getReminder(), currentSubscription()])
             .then(([reminder, subscription]) => {
                 if (cancelled) return;
-                setSettings({ enabled: reminder.enabled, time: reminder.time });
+                setSettings({
+                    enabled: reminder.enabled,
+                    time: reminder.time,
+                    message: reminder.message,
+                    nextDate: reminder.nextDate,
+                });
                 setDeviceSubscribed(subscription !== null);
             })
             .catch(() => {
@@ -134,12 +144,25 @@ export function useReminder(loggedIn: boolean) {
         };
     }, [loggedIn]);
 
+    // When a reminder arrives while Day Planner is open, play a chime as well.
+    // (With the app closed, the system's own notification sound is all there is.)
+    useEffect(() => {
+        if (!pushSupported()) return;
+
+        function onMessage(event: MessageEvent) {
+            if (event.data?.type === 'reminder-shown') playChime();
+        }
+
+        navigator.serviceWorker.addEventListener('message', onMessage);
+        return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+    }, []);
+
     // On: the reminder is enabled and this device will receive it.
     const active = loggedIn && settings.enabled && deviceSubscribed;
 
     // Runs only when the user clicks "Turn on reminders": this is the one place
     // that asks for notification permission.
-    async function enable(time: string): Promise<EnableResult> {
+    async function enable(time: string, message: string): Promise<EnableResult> {
         let permission: NotificationPermission;
         try {
             permission = await orGiveUp(Notification.requestPermission());
@@ -164,16 +187,22 @@ export function useReminder(loggedIn: boolean) {
 
         try {
             await api.savePushSubscription(subscription.toJSON());
-            await api.saveReminder({
+            const saved = await api.saveReminder({
                 enabled: true,
                 time,
+                message,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+            setSettings({
+                enabled: true,
+                time: saved.time,
+                message: saved.message,
+                nextDate: saved.nextDate,
             });
         } catch {
             return 'server';
         }
 
-        setSettings({ enabled: true, time });
         setDeviceSubscribed(true);
         return 'ok';
     }
@@ -184,10 +213,11 @@ export function useReminder(loggedIn: boolean) {
             await api.saveReminder({
                 enabled: false,
                 time: settings.time,
+                message: settings.message,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             });
             await forgetThisDevice();
-            setSettings({ ...settings, enabled: false });
+            setSettings({ ...settings, enabled: false, nextDate: null });
             setDeviceSubscribed(false);
             return true;
         } catch {

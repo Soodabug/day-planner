@@ -25,7 +25,13 @@ import { checkPassword, createToken, hashPassword, requireUser, type AuthEnv } f
 import { cors } from 'hono/cors';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { sendEmail } from './email.js';
-import { localDateAndTime, sendDueReminders, sendToUser, vapidPublicKey } from './push.js';
+import {
+    localDateAndTime,
+    reminderText,
+    sendDueReminders,
+    sendToUser,
+    vapidPublicKey,
+} from './push.js';
 
 const app = new Hono<AuthEnv>();
 app.use(
@@ -361,15 +367,34 @@ app.get('/reminder', requireUser, async (c) => {
         .where(eq(reminderSettings.userId, userId));
 
     if (!settings) {
-        return c.json({ enabled: false, time: '09:00', timezone: null });
+        return c.json({ enabled: false, time: '09:00', timezone: null, message: '', nextDate: null });
     }
 
     return c.json({
         enabled: settings.enabled,
         time: settings.time,
         timezone: settings.timezone,
+        message: settings.message ?? '',
+        nextDate: nextReminderDate(settings),
     });
 });
+
+// The user's local date (YYYY-MM-DD) of their next reminder, or null when reminders are off.
+function nextReminderDate(settings: {
+    enabled: boolean;
+    timezone: string;
+    lastSentDate: string | null;
+}) {
+    if (!settings.enabled) return null;
+
+    const today = localDateAndTime(settings.timezone).date;
+    if (settings.lastSentDate !== today) return today;
+
+    // Today's reminder is done (or its time had passed when it was set): tomorrow.
+    const tomorrow = new Date(`${today}T12:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    return tomorrow.toISOString().slice(0, 10);
+}
 
 app.put('/reminder', requireUser, async (c) => {
     const userId = c.get('userId');
@@ -379,30 +404,42 @@ app.put('/reminder', requireUser, async (c) => {
         throw new AppError('VALIDATION_FAILED', parsed.error.issues);
     }
     const { enabled, time, timezone } = parsed.data;
+    const message = parsed.data.message || null;
 
     // If today's time is already behind us, start tomorrow instead of sending right away.
     const local = localDateAndTime(timezone);
-    const lastSentDate = local.time >= time ? local.date : null;
+    const lastSentDate = local.time > time ? local.date : null;
 
     await db
         .insert(reminderSettings)
-        .values({ userId, enabled, time, timezone, lastSentDate })
+        .values({ userId, enabled, time, timezone, message, lastSentDate })
         .onConflictDoUpdate({
             target: reminderSettings.userId,
-            set: { enabled, time, timezone, lastSentDate },
+            set: { enabled, time, timezone, message, lastSentDate },
         });
 
-    return c.json({ enabled, time, timezone });
+    return c.json({
+        enabled,
+        time,
+        timezone,
+        message: message ?? '',
+        nextDate: nextReminderDate({ enabled, timezone, lastSentDate }),
+    });
 });
 
-// Sends a test notification to the logged-in user's own devices, right now.
+// Sends the user's reminder to their own devices right now,
+// exactly as the daily one will look. Does not count as today's reminder.
 app.post('/push/test', requireUser, async (c) => {
     const userId = c.get('userId');
 
-    const result = await sendToUser(userId, {
-        title: 'Day Planner reminders work',
-        body: 'This is what your daily reminder will look like.',
-    });
+    const [settings] = await db
+        .select()
+        .from(reminderSettings)
+        .where(eq(reminderSettings.userId, userId));
+    const tasks = await db.select().from(tasksTable).where(eq(tasksTable.userId, userId));
+    const today = localDateAndTime(settings?.timezone ?? 'UTC').date;
+
+    const result = await sendToUser(userId, reminderText(tasks, today, settings?.message));
 
     return c.json(result);
 });
@@ -452,6 +489,13 @@ app.onError((err, c) => {
         500,
     );
 });
+
+// While the server is awake it checks for due reminders every minute by itself.
+// The external cron call is still needed: it wakes a sleeping server.
+const REMINDER_CHECK_MS = 60_000;
+setInterval(() => {
+    sendDueReminders().catch((err) => console.error('reminder check failed', err));
+}, REMINDER_CHECK_MS);
 
 // Hosting providers tell us which port to use through PORT; locally it is 3000.
 const port = Number(process.env.PORT) || 3000;

@@ -38,6 +38,8 @@ export const reminderSchema = z.object({
     enabled: z.boolean(),
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), // HH:MM, 24h
     timezone: z.string().refine(isTimezone, 'must be an IANA timezone like Europe/Rome'),
+    // The user's own reminder text. Optional; empty means none.
+    message: z.string().trim().max(120).optional(),
 });
 
 export const taskIdSchema = z.uuid();
