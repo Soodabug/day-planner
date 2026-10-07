@@ -1,14 +1,14 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Bell, BellRing, LogOut, PartyPopper, Plus } from 'lucide-react';
-import { clearToken } from './api';
+import { clearToken, type Task } from './api';
 import { ReminderDialog } from './components/ReminderDialog';
 import { TaskItem } from './components/TaskItem';
 import { ErrorAlert } from './components/ui/alert';
 import { Button } from './components/ui/button';
 import { useReminder } from './hooks/useReminder';
 import { useTasks } from './hooks/useTasks';
-import { byDateAndTime, daysFromToday, greeting } from './lib/dates';
+import { daysFromToday, greeting } from './lib/dates';
 import { cn } from './lib/utils';
 
 type Props = {
@@ -35,8 +35,6 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
 
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => daysFromToday(0));
-    const [time, setTime] = useState('');
-    const [notice, setNotice] = useState('');
     const [adding, setAdding] = useState(false);
     const [reminderOpen, setReminderOpen] = useState(false);
     const titleRef = useRef<HTMLInputElement>(null);
@@ -44,36 +42,24 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
     const today = daysFromToday(0);
     const tomorrow = daysFromToday(1);
 
-    async function addTask(taskTitle: string, taskDate: string, taskTime: string | null) {
+    async function addTask(taskTitle: string, taskDate: string) {
         const trimmed = taskTitle.trim();
         if (!trimmed) return;
 
-        setNotice('');
-        // A task with a time notifies at that time, so ask for permission now.
-        if (taskTime) {
-            const allowed = await reminder.askPermission();
-            if (!allowed) {
-                setNotice(
-                    'Task saved, but notifications are off for this site. Allow them in your browser settings to get pinged on time.',
-                );
-            }
-        }
-
         setAdding(true);
-        const added = await add(trimmed, taskDate, taskTime);
+        const added = await add(trimmed, taskDate);
         setAdding(false);
 
         if (added) {
             setTitle('');
             setDate(daysFromToday(0));
-            setTime('');
         }
         titleRef.current?.focus();
     }
 
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        addTask(title, date, time || null);
+        addTask(title, date);
     }
 
     function logout() {
@@ -81,12 +67,13 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
         onLoggedOut();
     }
 
-    const open = tasks.filter((t) => !t.done).sort(byDateAndTime);
+    const byDate = (a: Task, b: Task) => a.date.localeCompare(b.date);
+    const open = tasks.filter((t) => !t.done).sort(byDate);
     const sections = [
         { name: 'Overdue', tasks: open.filter((t) => t.date < today), overdue: true },
         { name: 'Today', tasks: open.filter((t) => t.date === today), overdue: false },
         { name: 'Coming up', tasks: open.filter((t) => t.date > today), overdue: false },
-        { name: 'Done', tasks: tasks.filter((t) => t.done).sort(byDateAndTime), overdue: false },
+        { name: 'Done', tasks: tasks.filter((t) => t.done).sort(byDate), overdue: false },
     ].filter((section) => section.tasks.length > 0);
 
     const todayTasks = tasks.filter((t) => t.date === today);
@@ -207,24 +194,6 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
                                     date !== today && date !== tomorrow && 'border-ink bg-sun',
                                 )}
                             />
-                            <label htmlFor="task-time" className="sr-only">
-                                Time (optional, you get a notification at this time)
-                            </label>
-                            <span
-                                className={cn(
-                                    'flex h-9 items-center gap-1.5 rounded-md border-2 border-line bg-paper pl-2 text-sm font-medium',
-                                    time && 'border-ink bg-sun',
-                                )}
-                            >
-                                <Bell className="size-4" aria-hidden="true" />
-                                <input
-                                    id="task-time"
-                                    type="time"
-                                    value={time}
-                                    onChange={(e) => setTime(e.target.value)}
-                                    className="h-full rounded-r-md bg-transparent pr-2"
-                                />
-                            </span>
 
                             <Button type="submit" disabled={adding} className="ml-auto">
                                 <Plus aria-hidden="true" />
@@ -246,14 +215,6 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
 
             <main className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-10">
                 {error && <ErrorAlert>{error}</ErrorAlert>}
-                {notice && (
-                    <p
-                        role="status"
-                        className="rounded-md border-2 border-ink bg-haze px-3 py-2.5 text-sm font-medium"
-                    >
-                        {notice}
-                    </p>
-                )}
 
                 {status === 'loading' && (
                     <div role="status" className="flex flex-col gap-2">
@@ -357,7 +318,7 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
                                     key={idea}
                                     variant="sun"
                                     size="sm"
-                                    onClick={() => addTask(idea, today, null)}
+                                    onClick={() => addTask(idea, today)}
                                 >
                                     <Plus aria-hidden="true" />
                                     {idea}

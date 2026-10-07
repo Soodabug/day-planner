@@ -5,7 +5,6 @@ export type Task = {
     id: string;
     title: string;
     date: string;
-    time: string | null; // HH:MM (24h), null when the task has no time
     done: boolean;
 };
 
@@ -79,8 +78,8 @@ export const api = {
     listTasks: () =>
         request<Task[]>('GET', '/tasks'),
 
-    createTask: (title: string, date: string, time: string | null) =>
-        request<Task>('POST', '/tasks', { title, date, time }),
+    createTask: (title: string, date: string) =>
+        request<Task>('POST', '/tasks', { title, date }),
 
     markDone: (id: string) =>
         request<Task>('PUT', `/tasks/${id}`),

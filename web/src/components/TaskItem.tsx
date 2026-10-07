@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
-import { Bell, Check, Trash2 } from 'lucide-react';
+import { Check, Trash2 } from 'lucide-react';
 import type { Task } from '../api';
-import { formatDate, formatTime } from '../lib/dates';
+import { formatDate } from '../lib/dates';
 import { cn } from '../lib/utils';
 
 type Props = {
@@ -69,15 +69,7 @@ export function TaskItem({ task, overdue, busy, onDone, onDelete }: Props) {
                     {task.done && <span className="sr-only"> (done)</span>}
                 </p>
                 <p className={cn('text-sm text-quiet', overdue && 'text-alarm')}>
-                    <time dateTime={task.time ? `${task.date}T${task.time}` : task.date}>
-                        {formatDate(task.date)}
-                        {task.time && (
-                            <span className="ml-1.5 inline-flex items-center gap-1 font-semibold">
-                                <Bell className="size-3.5" aria-hidden="true" />
-                                {formatTime(task.time)}
-                            </span>
-                        )}
-                    </time>
+                    <time dateTime={task.date}>{formatDate(task.date)}</time>
                     {overdue && (
                         <span className="ml-2 rounded-sm bg-alarm px-1.5 py-0.5 text-xs font-semibold text-paper">
                             Overdue

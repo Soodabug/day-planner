@@ -49,7 +49,7 @@ export function useTasks(loggedIn: boolean, onLoggedOut: () => void) {
             clearToken();
             onLoggedOut();
         } else if (err instanceof ApiError && err.code === 'VALIDATION_FAILED') {
-            setError('Enter a title, a valid date and a valid time.');
+            setError('Enter a title and a valid date.');
         } else if (err instanceof ApiError) {
             setError(err.message);
         } else {
@@ -75,16 +75,16 @@ export function useTasks(loggedIn: boolean, onLoggedOut: () => void) {
     }
 
     // Returns true when the task was added.
-    async function add(title: string, date: string, time: string | null) {
+    async function add(title: string, date: string) {
         setError('');
 
         if (!loggedIn) {
-            setTasks((current) => [...current, createLocalTask(title, date, time)]);
+            setTasks((current) => [...current, createLocalTask(title, date)]);
             return true;
         }
 
         try {
-            const newTask = await api.createTask(title, date, time);
+            const newTask = await api.createTask(title, date);
             setTasks((current) => [...current, newTask]);
             return true;
         } catch (err) {
