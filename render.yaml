@@ -1,0 +1,44 @@
+# Render blueprint: creates the API and the web app from this repo.
+# Render dashboard -> New -> Blueprint -> pick this repository.
+# Values marked "sync: false" are asked for in the dashboard and never stored here.
+
+services:
+  # ----- API (Hono). The free plan sleeps when idle; the cron call wakes it. -----
+  - type: web
+    name: day-planner-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev
+    # "npm start" applies database migrations, then starts the server.
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: DATABASE_URL # Postgres connection string (e.g. from Neon)
+        sync: false
+      - key: WEB_ORIGIN # URL of day-planner-web, no trailing slash
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CRON_SECRET # copy this value into the cron service's X-Cron-Secret header
+        generateValue: true
+      - key: VAPID_PUBLIC_KEY # npx web-push generate-vapid-keys
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT # mailto:you@example.com
+        sync: false
+
+  # ----- Web app (React + Vite), served as static files. Never sleeps. -----
+  - type: web
+    name: day-planner-web
+    runtime: static
+    rootDir: web
+    buildCommand: npm ci --include=dev && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: VITE_API_URL # URL of day-planner-api, no trailing slash
+        sync: false

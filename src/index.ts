@@ -333,6 +333,9 @@ app.onError((err, c) => {
     );
 });
 
-serve({ fetch: app.fetch, port: 3000 }, () => {
-    console.log('Hono server started');
+// Hosting providers tell us which port to use through PORT; locally it is 3000.
+const port = Number(process.env.PORT) || 3000;
+
+serve({ fetch: app.fetch, port }, () => {
+    console.log(`Hono server started on port ${port}`);
 });
