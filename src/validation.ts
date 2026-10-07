@@ -12,6 +12,34 @@ export const updateTaskSchema = z.object({
     done: z.boolean().optional(),
 });
 
+// What the browser's PushSubscription.toJSON() gives us.
+export const pushSubscriptionSchema = z.object({
+    endpoint: z.url(),
+    keys: z.object({
+        p256dh: z.string().min(1),
+        auth: z.string().min(1),
+    }),
+});
+
+export const pushUnsubscribeSchema = z.object({
+    endpoint: z.url(),
+});
+
+function isTimezone(value: string) {
+    try {
+        new Intl.DateTimeFormat('en', { timeZone: value });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export const reminderSchema = z.object({
+    enabled: z.boolean(),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), // HH:MM, 24h
+    timezone: z.string().refine(isTimezone, 'must be an IANA timezone like Europe/Rome'),
+});
+
 export const taskIdSchema = z.uuid();
 
 export const authSchema = z.object({

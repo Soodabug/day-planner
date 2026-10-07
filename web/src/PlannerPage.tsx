@@ -6,7 +6,7 @@ import { ReminderDialog } from './components/ReminderDialog';
 import { TaskItem } from './components/TaskItem';
 import { ErrorAlert } from './components/ui/alert';
 import { Button } from './components/ui/button';
-import { useReminder } from './hooks/useReminder';
+import { forgetThisDevice, useReminder } from './hooks/useReminder';
 import { useTasks } from './hooks/useTasks';
 import { daysFromToday, greeting } from './lib/dates';
 import { cn } from './lib/utils';
@@ -31,7 +31,7 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
         loggedIn,
         onLoggedOut,
     );
-    const reminder = useReminder(tasks);
+    const reminder = useReminder(loggedIn);
 
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => daysFromToday(0));
@@ -62,7 +62,10 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
         addTask(title, date);
     }
 
-    function logout() {
+    async function logout() {
+        // Stop reminders on this device first, while the login token still works,
+        // so the next person using this browser does not get them.
+        await forgetThisDevice();
         clearToken();
         onLoggedOut();
     }
@@ -369,8 +372,9 @@ export function PlannerPage({ loggedIn, onSignIn, onLoggedOut }: Props) {
             <ReminderDialog
                 open={reminderOpen}
                 onClose={() => setReminderOpen(false)}
+                loggedIn={loggedIn}
+                onSignIn={onSignIn}
                 settings={reminder.settings}
-                permission={reminder.permission}
                 active={reminder.active}
                 onEnable={reminder.enable}
                 onDisable={reminder.disable}

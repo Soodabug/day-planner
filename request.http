@@ -27,3 +27,16 @@ Authorization: Bearer {{token}}
 
 ### Without token → should be 401
 GET http://localhost:3000/tasks
+
+
+### Reminder settings of the logged-in user
+GET http://localhost:3000/reminder
+Authorization: Bearer {{token}}
+
+### Send a test push to my own devices
+POST http://localhost:3000/push/test
+Authorization: Bearer {{token}}
+
+### Cron job: send due reminders (paste CRON_SECRET from .env here, never commit it)
+POST http://localhost:3000/jobs/send-reminders
+X-Cron-Secret: paste-your-CRON_SECRET-here

@@ -10,6 +10,13 @@ export type Task = {
 
 export type TaskChanges = Partial<Pick<Task, 'title' | 'date' | 'done'>>;
 
+// The daily reminder of the logged-in user. timezone is null until it is first saved.
+export type Reminder = {
+    enabled: boolean;
+    time: string; // HH:MM, 24h
+    timezone: string | null;
+};
+
 export type User = {
     id: string;
     email: string;
@@ -89,4 +96,25 @@ export const api = {
 
     deleteTask: (id: string) =>
         request<{ message: string }>('DELETE', `/tasks/${id}`),
+
+    // ----- reminders (web push) -----
+
+    getPushPublicKey: () =>
+        request<{ publicKey: string }>('GET', '/push/public-key'),
+
+    // subscription = what the browser's PushSubscription.toJSON() returns
+    savePushSubscription: (subscription: PushSubscriptionJSON) =>
+        request<{ message: string }>('POST', '/push/subscriptions', subscription),
+
+    deletePushSubscription: (endpoint: string) =>
+        request<{ message: string }>('DELETE', '/push/subscriptions', { endpoint }),
+
+    getReminder: () =>
+        request<Reminder>('GET', '/reminder'),
+
+    saveReminder: (reminder: { enabled: boolean; time: string; timezone: string }) =>
+        request<Reminder>('PUT', '/reminder', reminder),
+
+    sendTestPush: () =>
+        request<{ devices: number; sent: number; removed: number }>('POST', '/push/test'),
 };

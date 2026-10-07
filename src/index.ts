@@ -2,11 +2,26 @@ import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { and, eq } from 'drizzle-orm';
 import { db } from './db/client.js';
-import { tasks as tasksTable, users as usersTable } from './db/schema.js';
-import { authSchema, createTaskSchema, taskIdSchema, updateTaskSchema } from './validation.js';
+import {
+    pushSubscriptions,
+    reminderSettings,
+    tasks as tasksTable,
+    users as usersTable,
+} from './db/schema.js';
+import {
+    authSchema,
+    createTaskSchema,
+    pushSubscriptionSchema,
+    pushUnsubscribeSchema,
+    reminderSchema,
+    taskIdSchema,
+    updateTaskSchema,
+} from './validation.js';
 import { AppError, errors } from './errors.js';
 import { checkPassword, createToken, hashPassword, requireUser, type AuthEnv } from './auth.js';
 import { cors } from 'hono/cors';
+import { timingSafeEqual } from 'node:crypto';
+import { localDateAndTime, sendDueReminders, sendToUser, vapidPublicKey } from './push.js';
 
 const app = new Hono<AuthEnv>();
 app.use(
@@ -166,6 +181,136 @@ app.delete('/tasks/:id', requireUser, async (c) => {
     }
 
     return c.json({ message: 'Task deleted successfully' });
+});
+
+// ---------- reminders (web push) ----------
+
+// The browser needs this key to create a push subscription. It is public by design.
+app.get('/push/public-key', (c) => {
+    return c.json({ publicKey: vapidPublicKey });
+});
+
+// Save this browser/device for the logged-in user.
+app.post('/push/subscriptions', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const parsed = pushSubscriptionSchema.safeParse(await readJson(c));
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+    const { endpoint, keys } = parsed.data;
+
+    // The same browser can be re-used by another account: the latest login owns it.
+    await db
+        .insert(pushSubscriptions)
+        .values({ userId, endpoint, p256dh: keys.p256dh, auth: keys.auth })
+        .onConflictDoUpdate({
+            target: pushSubscriptions.endpoint,
+            set: { userId, p256dh: keys.p256dh, auth: keys.auth },
+        });
+
+    return c.json({ message: 'Subscription saved' }, 201);
+});
+
+app.delete('/push/subscriptions', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const parsed = pushUnsubscribeSchema.safeParse(await readJson(c));
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+
+    await db
+        .delete(pushSubscriptions)
+        .where(
+            and(
+                eq(pushSubscriptions.endpoint, parsed.data.endpoint),
+                eq(pushSubscriptions.userId, userId),
+            ),
+        );
+
+    return c.json({ message: 'Subscription removed' });
+});
+
+app.get('/reminder', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const [settings] = await db
+        .select()
+        .from(reminderSettings)
+        .where(eq(reminderSettings.userId, userId));
+
+    if (!settings) {
+        return c.json({ enabled: false, time: '09:00', timezone: null });
+    }
+
+    return c.json({
+        enabled: settings.enabled,
+        time: settings.time,
+        timezone: settings.timezone,
+    });
+});
+
+app.put('/reminder', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const parsed = reminderSchema.safeParse(await readJson(c));
+    if (!parsed.success) {
+        throw new AppError('VALIDATION_FAILED', parsed.error.issues);
+    }
+    const { enabled, time, timezone } = parsed.data;
+
+    // If today's time is already behind us, start tomorrow instead of sending right away.
+    const local = localDateAndTime(timezone);
+    const lastSentDate = local.time >= time ? local.date : null;
+
+    await db
+        .insert(reminderSettings)
+        .values({ userId, enabled, time, timezone, lastSentDate })
+        .onConflictDoUpdate({
+            target: reminderSettings.userId,
+            set: { enabled, time, timezone, lastSentDate },
+        });
+
+    return c.json({ enabled, time, timezone });
+});
+
+// Sends a test notification to the logged-in user's own devices, right now.
+app.post('/push/test', requireUser, async (c) => {
+    const userId = c.get('userId');
+
+    const result = await sendToUser(userId, {
+        title: 'Day Planner reminders work',
+        body: 'This is what your daily reminder will look like.',
+    });
+
+    return c.json(result);
+});
+
+// ---------- jobs (called by a cron service, not by the app) ----------
+
+function hasCronSecret(c: Context<AuthEnv>) {
+    const expected = process.env.CRON_SECRET;
+    const given = c.req.header('X-Cron-Secret');
+    if (!expected || !given) return false;
+
+    const a = Buffer.from(given);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Sends the daily reminder to every user who is due.
+// Safe to call as often as you like: each user gets at most one per day.
+app.post('/jobs/send-reminders', async (c) => {
+    if (!hasCronSecret(c)) {
+        throw new AppError('UNAUTHORIZED');
+    }
+
+    // ?force=1 ignores the time of day and "already sent today". For testing only.
+    const force = c.req.query('force') === '1';
+    const result = await sendDueReminders(force);
+
+    return c.json(result);
 });
 
 // ---------- errors ----------

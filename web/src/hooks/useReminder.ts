@@ -1,141 +1,154 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Task } from '../api';
-import { daysFromToday } from '../lib/dates';
-
-const SETTINGS_KEY = 'day-planner-reminder';
-const LAST_SENT_KEY = 'day-planner-reminder-last';
-const CHECK_EVERY_MS = 20_000;
+import { useEffect, useState } from 'react';
+import { api } from '../api';
 
 export type ReminderSettings = {
     enabled: boolean;
     time: string; // HH:MM, 24h
 };
 
-function loadSettings(): ReminderSettings {
-    try {
-        const raw = localStorage.getItem(SETTINGS_KEY);
-        const parsed = raw ? JSON.parse(raw) : null;
-        if (parsed && typeof parsed.enabled === 'boolean' && typeof parsed.time === 'string') {
-            return parsed;
-        }
-    } catch {
-        // fall through to the default
-    }
-    return { enabled: false, time: '09:00' };
-}
+export type EnableResult = 'ok' | 'blocked' | 'failed';
 
-function currentTime() {
-    const now = new Date();
-    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-}
+const SERVICE_WORKER_URL = '/sw.js';
 
-export function notificationsSupported() {
-    return typeof window !== 'undefined' && 'Notification' in window;
-}
-
-function reminderText(tasks: Task[]) {
-    const today = daysFromToday(0);
-    const open = tasks.filter((t) => !t.done);
-    const dueToday = open.filter((t) => t.date === today);
-    const overdue = open.filter((t) => t.date < today);
-
-    if (dueToday.length === 0 && overdue.length === 0) {
-        return {
-            title: 'What is the plan today?',
-            body: 'Nothing planned yet. Write down one thing you want to get done.',
-        };
-    }
-
-    const parts: string[] = [];
-    if (dueToday.length > 0) parts.push(`${dueToday.length} for today`);
-    if (overdue.length > 0) parts.push(`${overdue.length} overdue`);
-
-    const first = [...overdue, ...dueToday][0];
-    return {
-        title: `Your plan: ${parts.join(', ')}`,
-        body: `Start with "${first.title}".`,
-    };
-}
-
-// Returns false when the browser refused to show it.
-function show(title: string, body: string) {
-    try {
-        new Notification(title, { body, icon: '/favicon.svg', tag: 'day-planner-daily' });
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-// A daily browser notification with today's plan.
-// It can only fire while Day Planner is open in a tab.
-export function useReminder(tasks: Task[]) {
-    const [settings, setSettings] = useState<ReminderSettings>(loadSettings);
-    const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() =>
-        notificationsSupported() ? Notification.permission : 'unsupported',
+export function pushSupported() {
+    return (
+        typeof window !== 'undefined' &&
+        'serviceWorker' in navigator &&
+        'PushManager' in window &&
+        'Notification' in window
     );
+}
 
-    const tasksRef = useRef(tasks);
+// The server's public key comes as base64url text; the browser wants bytes.
+function keyToBytes(base64Url: string) {
+    const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
+    const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+        bytes[i] = raw.charCodeAt(i);
+    }
+    return bytes;
+}
+
+// This device's push subscription, if it has one. Never asks for permission
+// and never registers anything, so it is safe to call on page load.
+async function currentSubscription() {
+    if (!pushSupported()) return null;
+    const registration = await navigator.serviceWorker.getRegistration(SERVICE_WORKER_URL);
+    return (await registration?.pushManager.getSubscription()) ?? null;
+}
+
+async function subscribeThisDevice() {
+    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
+    await navigator.serviceWorker.ready;
+
+    const { publicKey } = await api.getPushPublicKey();
+    const options = { userVisibleOnly: true, applicationServerKey: keyToBytes(publicKey) };
+
+    try {
+        return await registration.pushManager.subscribe(options);
+    } catch {
+        // An old subscription made with a different server key blocks a new one: replace it.
+        const old = await registration.pushManager.getSubscription();
+        await old?.unsubscribe();
+        return registration.pushManager.subscribe(options);
+    }
+}
+
+// Stops push on this device and tells the server to forget it.
+// Call it before logging out, while the login token still works.
+export async function forgetThisDevice() {
+    try {
+        const subscription = await currentSubscription();
+        if (!subscription) return;
+        await api.deletePushSubscription(subscription.endpoint).catch(() => {});
+        await subscription.unsubscribe();
+    } catch {
+        // Best effort: the server also drops devices that stop answering.
+    }
+}
+
+// The daily reminder. The server sends it as a push notification,
+// so it arrives even when Day Planner is not open. Needs an account.
+export function useReminder(loggedIn: boolean) {
+    const [settings, setSettings] = useState<ReminderSettings>({ enabled: false, time: '09:00' });
+    const [deviceSubscribed, setDeviceSubscribed] = useState(false);
+
+    // Load the saved setting and check this device. No permission prompt here.
     useEffect(() => {
-        tasksRef.current = tasks;
-    }, [tasks]);
+        if (!loggedIn) return;
+        let cancelled = false;
 
-    const active = settings.enabled && permission === 'granted';
+        Promise.all([api.getReminder(), currentSubscription()])
+            .then(([reminder, subscription]) => {
+                if (cancelled) return;
+                setSettings({ enabled: reminder.enabled, time: reminder.time });
+                setDeviceSubscribed(subscription !== null);
+            })
+            .catch(() => {
+                // Reminders stay shown as off; the tasks hook handles a lost login.
+            });
 
-    useEffect(() => {
-        if (!active) return;
+        return () => {
+            cancelled = true;
+        };
+    }, [loggedIn]);
 
-        function check() {
-            const today = daysFromToday(0);
-            if (localStorage.getItem(LAST_SENT_KEY) === today) return;
-            if (currentTime() < settings.time) return;
+    // On: the reminder is enabled and this device will receive it.
+    const active = loggedIn && settings.enabled && deviceSubscribed;
 
-            const { title, body } = reminderText(tasksRef.current);
-            if (show(title, body)) {
-                localStorage.setItem(LAST_SENT_KEY, today);
-            }
+    // Runs only when the user clicks "Turn on reminders": this is the one place
+    // that asks for notification permission.
+    async function enable(time: string): Promise<EnableResult> {
+        if (!pushSupported()) return 'failed';
+
+        try {
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') return 'blocked';
+
+            const subscription = await subscribeThisDevice();
+            await api.savePushSubscription(subscription.toJSON());
+            await api.saveReminder({
+                enabled: true,
+                time,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+
+            setSettings({ enabled: true, time });
+            setDeviceSubscribed(true);
+            return 'ok';
+        } catch {
+            return 'failed';
         }
+    }
 
-        check();
-        const timer = setInterval(check, CHECK_EVERY_MS);
-        return () => clearInterval(timer);
-    }, [active, settings.time]);
-
-    function save(next: ReminderSettings) {
-        setSettings(next);
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-
-        // If today's time is already behind us, start tomorrow instead of firing right away.
-        if (next.enabled && currentTime() >= next.time) {
-            localStorage.setItem(LAST_SENT_KEY, daysFromToday(0));
-        } else {
-            localStorage.removeItem(LAST_SENT_KEY);
+    // Turns the reminder off for the account and removes this device.
+    async function disable() {
+        try {
+            await api.saveReminder({
+                enabled: false,
+                time: settings.time,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+            await forgetThisDevice();
+            setSettings({ ...settings, enabled: false });
+            setDeviceSubscribed(false);
+            return true;
+        } catch {
+            return false;
         }
     }
 
-    // Asks the browser for permission if needed. Returns true when reminders are on.
-    async function enable(time: string) {
-        if (!notificationsSupported()) return false;
-
-        const result =
-            Notification.permission === 'granted'
-                ? 'granted'
-                : await Notification.requestPermission();
-        setPermission(result);
-
-        if (result !== 'granted') return false;
-        save({ enabled: true, time });
-        return true;
+    // Asks the server to push a test notification. Returns true when it was sent.
+    async function sendTest() {
+        try {
+            const result = await api.sendTestPush();
+            return result.sent > 0;
+        } catch {
+            return false;
+        }
     }
 
-    function disable() {
-        save({ ...settings, enabled: false });
-    }
-
-    function sendTest() {
-        const { title, body } = reminderText(tasksRef.current);
-        return show(title, body);
-    }
-
-    return { settings, permission, active, enable, disable, sendTest };
+    return { settings, active, enable, disable, sendTest };
 }
