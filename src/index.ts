@@ -6,8 +6,17 @@ import { tasks as tasksTable, users as usersTable } from './db/schema.js';
 import { authSchema, createTaskSchema, taskIdSchema } from './validation.js';
 import { AppError, errors } from './errors.js';
 import { checkPassword, createToken, hashPassword, requireUser, type AuthEnv } from './auth.js';
+import { cors } from 'hono/cors';
 
 const app = new Hono<AuthEnv>();
+app.use(
+    '*',
+    cors({
+        origin: process.env.WEB_ORIGIN!,
+        allowHeaders: ['Content-Type', 'Authorization'],
+        allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+    }),
+);
 
 app.get('/', (c) => {
     return c.text('Day Planner API');
